@@ -1,6 +1,6 @@
-# @infino-ai/mcp-server
+# Infino MCP server
 
-An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com/infino-ai/infino) — lets an AI agent run keyword, semantic, and SQL retrieval over your data on object storage, from any MCP client.
+An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com/infino-ai/infino) — lets an AI agent run keyword, semantic, and SQL retrieval over your data on object storage, from any MCP client. Published on npm as [`@infino-ai/mcp-server`](https://www.npmjs.com/package/@infino-ai/mcp-server).
 
 > Status: early. Read-only retrieval (keyword + semantic search + SQL) by default; writes opt-in behind a flag.
 
