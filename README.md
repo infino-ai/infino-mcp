@@ -43,11 +43,15 @@ An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com
 
 The server is launched by your MCP client over stdio — you don't run it directly in normal use. Every client config follows the same shape: command `npx -y @infino-ai/mcp-server`, with configuration supplied via environment variables. At minimum, set `INFINO_MCP_URI` to the data you want to serve.
 
+> **Early access — package registry.** Until `@infino-ai/mcp-server` is on public npm, it (and the `infino` binding it depends on) is published to a public [Gemfury](https://gemfury.com) proxy. Add `npm_config_registry` to the server's `env` so `npx` resolves from there — this sets the **default** registry, so the package, the `infino` binding, and public dependencies all resolve through the proxy. The configs below include it; **delete that line once the package is on public npm.** (Equivalently, you can pass `--registry https://npm-proxy.fury.io/infino/` in the `npx` args.)
+
 ```jsonc
 {
   "command": "npx",
   "args": ["-y", "@infino-ai/mcp-server"],
   "env": {
+    // early access only — remove once on public npm
+    "npm_config_registry": "https://npm-proxy.fury.io/infino/",
     "INFINO_MCP_URI": "/Users/me/.infino/memory"
   }
 }
@@ -66,9 +70,12 @@ Add the server with the CLI. Use `--scope user` to make it available in every pr
 ```sh
 claude mcp add infino \
   --scope user \
+  -e npm_config_registry=https://npm-proxy.fury.io/infino/ \
   -e INFINO_MCP_URI=/Users/me/.infino/memory \
   -- npx -y @infino-ai/mcp-server
 ```
+
+> The `npm_config_registry` flag is the early-access step described above — drop it once the package is on public npm.
 
 Add more knobs with repeated `-e` flags, e.g. `-e INFINO_MCP_ENABLE_WRITES=true`. Verify with:
 
@@ -94,6 +101,8 @@ Edit the configuration file (create it if it doesn't exist), then fully restart 
       "command": "npx",
       "args": ["-y", "@infino-ai/mcp-server"],
       "env": {
+        // early access only — remove once on public npm
+        "npm_config_registry": "https://npm-proxy.fury.io/infino/",
         "INFINO_MCP_URI": "/Users/me/.infino/memory"
       }
     }
@@ -112,6 +121,8 @@ Add the server to **`~/.cursor/mcp.json`** (available in all projects) or **`<pr
       "command": "npx",
       "args": ["-y", "@infino-ai/mcp-server"],
       "env": {
+        // early access only — remove once on public npm
+        "npm_config_registry": "https://npm-proxy.fury.io/infino/",
         "INFINO_MCP_URI": "/Users/me/.infino/memory"
       }
     }
@@ -131,6 +142,8 @@ VS Code (1.102+) reads MCP servers from **`.vscode/mcp.json`** in the workspace 
       "command": "npx",
       "args": ["-y", "@infino-ai/mcp-server"],
       "env": {
+        // early access only — remove once on public npm
+        "npm_config_registry": "https://npm-proxy.fury.io/infino/",
         "INFINO_MCP_URI": "/Users/me/.infino/memory"
       }
     }
@@ -145,7 +158,8 @@ Any client that speaks MCP over stdio works. Configure it to launch:
 ```
 command: npx
 args:    -y @infino-ai/mcp-server
-env:     INFINO_MCP_URI=<path-or-bucket-uri>   (plus any options below)
+env:     npm_config_registry=https://npm-proxy.fury.io/infino/   (early access — drop at public-npm launch)
+         INFINO_MCP_URI=<path-or-bucket-uri>                     (plus any options below)
 ```
 
 Logs are written to **stderr** so they never corrupt the JSON-RPC stream on stdout — point your client's log capture there when debugging.
