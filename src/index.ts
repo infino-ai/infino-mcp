@@ -140,8 +140,7 @@ server.registerTool(
   "infino_list_tables",
   {
     title: "List Infino tables",
-    description:
-      "List the tables in the connected Infino catalog. Call this first to discover what data is available to search.",
+    description: "List the names of the tables in the connected Infino catalog.",
     inputSchema: {},
   },
   async () => {
@@ -177,16 +176,50 @@ server.registerTool(
 );
 
 server.registerTool(
+  "infino_semantic_search",
+  {
+    title: "Semantic (vector) search",
+    description:
+      "Vector similarity search over a table's embedding column. Embeds the query text with a local model (no API " +
+      "key), then returns the rows whose stored vectors are nearest, each with a similarity score. Matches on meaning, " +
+      "so it also retrieves paraphrases and synonyms of the query, not only literal term matches. Prefer this over " +
+      "SQL LIKE when searching a free-text column for a concept whose exact wording is unknown (it retrieves paraphrases).",
+    inputSchema: {
+      table: z.string().describe("Table to search."),
+      query: z.string().describe("Query text; embedded and matched by vector similarity."),
+      k: z.number().int().positive().max(100).default(10).describe("Maximum results."),
+      column: z.string().optional().describe("Text column to return with each hit; inferred if omitted."),
+      vectorColumn: z.string().optional().describe("Vector column to search; inferred if omitted."),
+    },
+  },
+  async ({ table, query, k, column, vectorColumn }) => {
+    try {
+      const handle = db.openTable(table);
+      const vecCol = vectorColumn ?? inferVectorColumn(handle);
+      if (!vecCol) return fail(`semantic_search: no vector column in '${table}' — pass 'vectorColumn'.`);
+      const textCol = column ?? inferTextColumn(handle);
+      const vector = await embed(query);
+      const projection = textCol ? [textCol, "_id", "score"] : ["_id", "score"];
+      const results = handle.vectorSearch(vecCol, vector, k, { projection });
+      return ok({ table, query, results });
+    } catch (err) {
+      return fail(`semantic_search failed: ${(err as Error).message}`);
+    }
+  },
+);
+
+server.registerTool(
   "infino_keyword_search",
   {
     title: "Keyword (BM25) search",
     description:
-      "Exact-term (BM25) search — matches the literal tokens passed. Use ONLY when the user wants a specific literal " +
-      "string: an error code, an identifier, a product name, an exact phrase. For a natural-language question or to " +
-      "find content by meaning, do NOT use this — use infino_semantic_search. No API key.",
+      "BM25 full-text search over a text column. Ranks rows by how well the query's literal terms match the column's " +
+      "tokens, returning each with a relevance score. Matches exact tokens (and their stems), not synonyms or " +
+      "paraphrases. No API key. Prefer this over SQL LIKE when searching a free-text column for known literal terms " +
+      "(error codes, names, exact phrases) and you want results ranked by relevance.",
     inputSchema: {
       table: z.string().describe("Table to search."),
-      query: z.string().describe("Search terms."),
+      query: z.string().describe("Query terms, matched as literal tokens."),
       k: z.number().int().positive().max(100).default(10).describe("Maximum results to return."),
       column: z
         .string()
@@ -210,46 +243,16 @@ server.registerTool(
 );
 
 server.registerTool(
-  "infino_semantic_search",
-  {
-    title: "Semantic (vector) search",
-    description:
-      "DEFAULT tool for finding information — use it for any natural-language question or to retrieve content by " +
-      "meaning. Embeds the query with a local model (no API key) and ranks by semantic similarity; it handles " +
-      "paraphrase and synonyms natively, so pass the user's question as-is, do NOT expand it with extra keywords. " +
-      "Use infino_keyword_search only for an exact literal term, and infino_sql for counts/filters/joins.",
-    inputSchema: {
-      table: z.string().describe("Table to search."),
-      query: z.string().describe("Natural-language query."),
-      k: z.number().int().positive().max(100).default(10).describe("Maximum results."),
-      column: z.string().optional().describe("Text column to return with each hit; inferred if omitted."),
-      vectorColumn: z.string().optional().describe("Vector column to search; inferred if omitted."),
-    },
-  },
-  async ({ table, query, k, column, vectorColumn }) => {
-    try {
-      const handle = db.openTable(table);
-      const vecCol = vectorColumn ?? inferVectorColumn(handle);
-      if (!vecCol) return fail(`semantic_search: no vector column in '${table}' — pass 'vectorColumn'.`);
-      const textCol = column ?? inferTextColumn(handle);
-      const vector = await embed(query);
-      const projection = textCol ? [textCol, "_id", "score"] : ["_id", "score"];
-      const results = handle.vectorSearch(vecCol, vector, k, { projection });
-      return ok({ table, query, results });
-    } catch (err) {
-      return fail(`semantic_search failed: ${(err as Error).message}`);
-    }
-  },
-);
-
-server.registerTool(
   "infino_sql",
   {
     title: "SQL over Infino",
     description:
-      "SQL for structured or analytical questions: counts, GROUP BY, filtering by a column value, joins across tables. " +
-      "NOT for finding relevant content by meaning — use infino_semantic_search for retrieval. Search table functions " +
-      "inside SQL aren't supported from this server yet. " +
+      "Run SQL over the catalog's tables — counts, GROUP BY, filtering by column value, joins, aggregates — returning " +
+      "result rows. Row filters use literal/substring matching (e.g. LIKE), not ranked relevance. The engine's search " +
+      "table functions (bm25_search, vector_search) are not callable from SQL on this server. For ranked or " +
+      "meaning-based text search, use the infino_keyword_search and infino_semantic_search tools instead. " +
+      "Prefer this for structural or analytical questions (counts, joins, filtering by an exact column value), " +
+      "not for finding text by relevance. " +
       (writesEnabled
         ? "Any single statement is allowed (including DDL/DML), since INFINO_MCP_ENABLE_WRITES is set."
         : "Read-only: a single SELECT / WITH statement; DDL/DML is rejected."),
