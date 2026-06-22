@@ -51,9 +51,18 @@ jobs:
       - name: Validate (dry run)
         if: ${{ inputs.dry_run }}
         run: npm publish --dry-run --tag latest --access public
+      # Idempotent: skip if this version is already on npm, so a re-run (e.g.
+      # after a stage-2 failure) doesn't fail here on "cannot publish over
+      # existing version" and can proceed to the MCP Registry step.
       - name: Publish to npm
         if: ${{ !inputs.dry_run }}
-        run: npm publish --tag latest --access public
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@infino-ai/mcp-server@$VERSION" version >/dev/null 2>&1; then
+            echo "@infino-ai/mcp-server@$VERSION is already on npm — skipping npm publish."
+          else
+            npm publish --tag latest --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -77,6 +86,18 @@ jobs:
       - name: Authenticate to MCP Registry (GitHub OIDC)
         if: ${{ !inputs.dry_run }}
         run: ./mcp-publisher login github-oidc
+      # Idempotent: the registry rejects re-publishing an existing version, so
+      # skip if this version is already listed (200 from the per-version
+      # endpoint). Any other response (e.g. 404) falls through to publish.
       - name: Publish to MCP Registry
         if: ${{ !inputs.dry_run }}
-        run: ./mcp-publisher publish
+        run: |
+          VERSION=$(node -p "require('./server.json').version")
+          NAME_ENC=$(node -p "encodeURIComponent(require('./server.json').name)")
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            "https://registry.modelcontextprotocol.io/v0.1/servers/${NAME_ENC}/versions/${VERSION}")
+          if [ "$CODE" = "200" ]; then
+            echo "$(node -p "require('./server.json').name")@${VERSION} is already in the MCP Registry — skipping publish."
+          else
+            ./mcp-publisher publish
+          fi
