@@ -1,0 +1,52 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.infino-ai/mcp-server",
+  "description": "MCP server for Infino — keyword, vector, hybrid, and SQL retrieval over data on object storage, for AI agents.",
+  "repository": {
+    "url": "https://github.com/infino-ai/infino-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@infino-ai/mcp-server",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "INFINO_MCP_URI",
+          "description": "Data to serve: a local path or an s3://|gs://|az:// bucket URI.",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "INFINO_MCP_ENABLE_WRITES",
+          "description": "Set (1/true/yes) to expose add/update/delete tools and allow DDL/DML through SQL. Read-only when unset.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "INFINO_MCP_EMBED_MODEL",
+          "description": "Hugging Face feature-extraction model for local embedding (default Xenova/all-MiniLM-L6-v2, 384-dim).",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "INFINO_MCP_S3_ENDPOINT",
+          "description": "Custom S3 endpoint for non-AWS S3-compatible stores (Cloudflare R2, MinIO, Backblaze B2).",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "INFINO_MCP_S3_REGION",
+          "description": "Region sent with a custom S3 endpoint (default 'auto').",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

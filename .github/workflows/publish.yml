@@ -1,0 +1,82 @@
+name: Publish (npm + MCP Registry)
+
+# Publishes the server in two stages:
+#   1. npm — the actual package @infino-ai/mcp-server to the public npm registry.
+#   2. MCP Registry — the server metadata (server.json) to
+#      registry.modelcontextprotocol.io, which propagates to downstream catalogs
+#      (Smithery, Glama, PulseMCP, Docker MCP Catalog). The registry hosts only
+#      metadata and verifies ownership of the npm package via the "mcpName" field
+#      in package.json, so npm must publish first.
+#
+# npm auth is the classic NPM_TOKEN secret (publish rights under the infino-ai
+# org). Provenance is emitted via NPM_CONFIG_PROVENANCE + the OIDC id-token (the
+# same combo the infino node binding uses; works for a first-time publish of a
+# new name, unlike pure OIDC trusted publishing). MCP Registry auth is GitHub
+# OIDC (github-oidc) — no secret; the id-token from this infino-ai/infino-mcp
+# repo authorizes the io.github.infino-ai/* namespace.
+#
+# Triggered manually. The default run is a dry run: it builds and validates,
+# publishing nothing. Re-run with dry_run unchecked to publish for real.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate only — build + pack, publish nothing"
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write # OIDC token: npm provenance + MCP Registry github-oidc auth
+  contents: read
+
+jobs:
+  publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      # npm ci installs exactly what package-lock.json pins, from public npm.
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+
+      # --- stage 1: npm ---
+      - name: Validate (dry run)
+        if: ${{ inputs.dry_run }}
+        run: npm publish --dry-run --tag latest --access public
+      - name: Publish to npm
+        if: ${{ !inputs.dry_run }}
+        run: npm publish --tag latest --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
+
+      # --- stage 2: MCP Registry ---
+      # Keep server.json's versions in lockstep with the package version so the
+      # registry entry always points at the version just published to npm.
+      - name: Sync server.json version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.tmp
+          mv server.tmp server.json
+      - name: Install mcp-publisher
+        if: ${{ !inputs.dry_run }}
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+      - name: Validate server.json (dry run)
+        if: ${{ inputs.dry_run }}
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher validate
+      - name: Authenticate to MCP Registry (GitHub OIDC)
+        if: ${{ !inputs.dry_run }}
+        run: ./mcp-publisher login github-oidc
+      - name: Publish to MCP Registry
+        if: ${{ !inputs.dry_run }}
+        run: ./mcp-publisher publish

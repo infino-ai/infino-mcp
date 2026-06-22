@@ -1,6 +1,10 @@
 # Infino MCP server
 
-An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com/infino-ai/infino) — it lets an AI agent run **keyword**, **semantic**, and **SQL** retrieval over your data on object storage, from any MCP-compatible client (Claude Code, Claude Desktop, Cursor, VS Code, and others). Published on npm as [`@infino-ai/mcp-server`](https://www.npmjs.com/package/@infino-ai/mcp-server).
+[![npm](https://img.shields.io/npm/v/@infino-ai/mcp-server.svg)](https://www.npmjs.com/package/@infino-ai/mcp-server)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.infino--ai%2Fmcp--server-blue)](https://registry.modelcontextprotocol.io/?search=io.github.infino-ai/mcp-server)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-green.svg)](./LICENSE)
+
+An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com/infino-ai/infino) — it lets an AI agent run **keyword**, **semantic**, **hybrid**, and **SQL** retrieval over your data on object storage, from any MCP-compatible client (Claude Code, Claude Desktop, Cursor, VS Code, and others). Published on npm as [`@infino-ai/mcp-server`](https://www.npmjs.com/package/@infino-ai/mcp-server) and listed on the [official MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.infino-ai/mcp-server` (which propagates to catalogs like Smithery, Glama, and PulseMCP).
 
 - **No API key.** Semantic search embeds queries with a local model — nothing leaves the machine for embedding.
 - **Read-only by default.** Writes and full SQL are opt-in behind a single environment flag.
@@ -43,15 +47,11 @@ An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com
 
 The server is launched by your MCP client over stdio — you don't run it directly in normal use. Every client config follows the same shape: command `npx -y @infino-ai/mcp-server`, with configuration supplied via environment variables. At minimum, set `INFINO_MCP_URI` to the data you want to serve.
 
-> **Early access — package registry.** Until `@infino-ai/mcp-server` is on public npm, it (and the `infino` binding it depends on) is published to a public [Gemfury](https://gemfury.com) proxy. Add `npm_config_registry` to the server's `env` so `npx` resolves from there — this sets the **default** registry, so the package, the `infino` binding, and public dependencies all resolve through the proxy. The configs below include it; **delete that line once the package is on public npm.** (Equivalently, you can pass `--registry https://npm-proxy.fury.io/infino/` in the `npx` args.)
-
 ```jsonc
 {
   "command": "npx",
   "args": ["-y", "@infino-ai/mcp-server"],
   "env": {
-    // early access only — remove once on public npm
-    "npm_config_registry": "https://npm-proxy.fury.io/infino/",
     "INFINO_MCP_URI": "/Users/me/.infino/memory"
   }
 }
@@ -70,12 +70,9 @@ Add the server with the CLI. Use `--scope user` to make it available in every pr
 ```sh
 claude mcp add infino \
   --scope user \
-  -e npm_config_registry=https://npm-proxy.fury.io/infino/ \
   -e INFINO_MCP_URI=/Users/me/.infino/memory \
   -- npx -y @infino-ai/mcp-server
 ```
-
-> The `npm_config_registry` flag is the early-access step described above — drop it once the package is on public npm.
 
 Add more knobs with repeated `-e` flags, e.g. `-e INFINO_MCP_ENABLE_WRITES=true`. Verify with:
 
@@ -101,8 +98,6 @@ Edit the configuration file (create it if it doesn't exist), then fully restart 
       "command": "npx",
       "args": ["-y", "@infino-ai/mcp-server"],
       "env": {
-        // early access only — remove once on public npm
-        "npm_config_registry": "https://npm-proxy.fury.io/infino/",
         "INFINO_MCP_URI": "/Users/me/.infino/memory"
       }
     }
@@ -121,8 +116,6 @@ Add the server to **`~/.cursor/mcp.json`** (available in all projects) or **`<pr
       "command": "npx",
       "args": ["-y", "@infino-ai/mcp-server"],
       "env": {
-        // early access only — remove once on public npm
-        "npm_config_registry": "https://npm-proxy.fury.io/infino/",
         "INFINO_MCP_URI": "/Users/me/.infino/memory"
       }
     }
@@ -142,8 +135,6 @@ VS Code (1.102+) reads MCP servers from **`.vscode/mcp.json`** in the workspace 
       "command": "npx",
       "args": ["-y", "@infino-ai/mcp-server"],
       "env": {
-        // early access only — remove once on public npm
-        "npm_config_registry": "https://npm-proxy.fury.io/infino/",
         "INFINO_MCP_URI": "/Users/me/.infino/memory"
       }
     }
@@ -158,8 +149,7 @@ Any client that speaks MCP over stdio works. Configure it to launch:
 ```
 command: npx
 args:    -y @infino-ai/mcp-server
-env:     npm_config_registry=https://npm-proxy.fury.io/infino/   (early access — drop at public-npm launch)
-         INFINO_MCP_URI=<path-or-bucket-uri>                     (plus any options below)
+env:     INFINO_MCP_URI=<path-or-bucket-uri>   (plus any options below)
 ```
 
 Logs are written to **stderr** so they never corrupt the JSON-RPC stream on stdout — point your client's log capture there when debugging.
@@ -218,14 +208,19 @@ Cloud credentials are read from the standard provider environment variables — 
 
 | Tool | Arguments | What it does |
 | --- | --- | --- |
-| `infino_semantic_search` | `table`, `query`, `k`, `column?`, `vectorColumn?` | Find passages by **meaning** — embeds the query with a local model (no key) and ranks by vector similarity. Handles paraphrase and synonyms. |
+| `infino_semantic_search` | `table`, `query`, `k`, `column?`, `vectorColumn?`, `filter?` | Find passages by **meaning** — embeds the query with a local model (no key) and ranks by vector similarity. Handles paraphrase and synonyms. Optional `filter` (`{column, query, mode?}`) restricts the ranking to rows whose keyword column matches first (a pushdown pre-filter). |
 | `infino_keyword_search` | `table`, `query`, `k`, `column?` | BM25 full-text search — for exact terms, identifiers, error codes, product names. |
+| `infino_hybrid_search` | `table`, `query`, `k`, `column?`, `vectorColumn?` | **Fused** keyword + semantic search in one ranking pass — BM25 over the text column combined with vector similarity, so rows matching the literal terms *and* the meaning rank highest. |
+| `infino_token_match` | `table`, `query`, `column?`, `mode?`, `limit?` | Unranked keyword filter — the set of rows whose text column contains the token(s). Use when you need the matches, not a relevance order. |
+| `infino_exact_match` | `table`, `value`, `column?`, `limit?` | Unranked exact-equality filter over an indexed column (tag, status, id string). |
 | `infino_sql` | `query` | SQL for counts, filters, joins, aggregates. Read-only (single `SELECT`/`WITH`) by default; accepts any single statement when `INFINO_MCP_ENABLE_WRITES` is set. |
 | `infino_list_tables` | — | List the tables in the connected catalog. |
 | `infino_describe_table` | `table` | Column names and types for a table. |
-| `infino_add_documents` | `table`, `documents` | Append rows (one call = one commit); embeds the text column for vector tables. **Only registered when `INFINO_MCP_ENABLE_WRITES` is set.** |
+| `infino_add_documents` | `table`, `documents` | Append rows (one call = one commit); embeds the text column for vector tables. **Only when `INFINO_MCP_ENABLE_WRITES` is set.** |
+| `infino_update_documents` | `table`, `predicate`, `documents` | Replace the rows matching a SQL predicate with new documents, 1:1 (missing vectors are embedded). Durable storage only. **Only when `INFINO_MCP_ENABLE_WRITES` is set.** |
+| `infino_delete_documents` | `table`, `predicate` | Delete the rows matching a SQL predicate. Durable storage only. **Only when `INFINO_MCP_ENABLE_WRITES` is set.** |
 
-Retrieval table functions (`bm25_search`, `vector_search`, …) inside `infino_sql` are not supported from the server yet — use the dedicated search tools for retrieval. Hybrid (fused keyword + semantic) is reachable in the engine via SQL and will return as a tool once that path is supported from the server.
+The engine's search table functions (`bm25_search`, `vector_search`, `hybrid_search`, …) are not callable from `infino_sql` — retrieval goes through the dedicated search tools above, which embed and project for you. `infino_sql` is for filters, joins, and aggregates.
 
 ---
 
@@ -264,7 +259,7 @@ If you change `INFINO_MCP_EMBED_MODEL`, the table's vector index must match the 
 
 ## Local development
 
-The server depends on the published `infino` Node binding. It currently resolves from the public Gemfury proxy (see `.npmrc`); once `infino` is on public npm, delete `.npmrc` and it resolves from there.
+The server depends on the published [`@infino-ai/infino`](https://www.npmjs.com/package/@infino-ai/infino) Node binding, which resolves from public npm like any other dependency.
 
 ```sh
 npm install

@@ -4,13 +4,14 @@
 //
 // MCP server for Infino — lets an agent run retrieval over data on object
 // storage from any MCP client. Exposes catalog discovery (list/describe),
-// keyword (BM25) and semantic (local-embedding vector) search, and read-only
-// SQL; document writes and full SQL are opt-in behind INFINO_MCP_ENABLE_WRITES.
+// keyword (BM25), semantic (local-embedding vector), and hybrid (fused)
+// search, unranked token/exact match, and read-only SQL; document writes
+// (add/update/delete) and full SQL are opt-in behind INFINO_MCP_ENABLE_WRITES.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { connect, type ConnectOptions } from "infino";
+import { connect, type ConnectOptions } from "@infino-ai/infino";
 import { embed, embedderInfo } from "./embedding.js";
 
 // --- connection (env-configured, opened once at startup) -------------------
@@ -78,6 +79,13 @@ const fail = (message: string) => ({
   isError: true,
 });
 
+// SQL literal / identifier quoting. The hybrid_search tool builds SQL from
+// caller-supplied table/column names and query text, so every interpolated
+// value is escaped: string args become single-quoted literals, column names
+// become double-quoted identifiers.
+const sqlStr = (s: string) => `'${s.replace(/'/g, "''")}'`;
+const sqlIdent = (s: string) => `"${s.replace(/"/g, '""')}"`;
+
 // When the caller doesn't name a column, search the first UTF-8 text column in
 // the table's schema. (A table can have several; an explicit `column` overrides.)
 function inferTextColumn(table: { schema(): { fields: Array<{ name: string; type: unknown }> } }):
@@ -95,20 +103,40 @@ function inferVectorColumn(table: { schema(): { fields: Array<{ name: string; ty
   return field?.name;
 }
 
+// When a table has a vector index, fill in a missing vector for each row by
+// embedding its text column with the local model. Shared by the add and update
+// write tools so an agent can pass plain text and never a raw vector.
+type SchemaHandle = { schema(): { fields: Array<{ name: string; type: unknown }> } };
+async function embedRows(
+  handle: SchemaHandle,
+  rows: Array<Record<string, unknown>>,
+): Promise<Array<Record<string, unknown>>> {
+  const vecCol = inferVectorColumn(handle);
+  if (!vecCol) return rows;
+  const textCol = inferTextColumn(handle);
+  return Promise.all(
+    rows.map(async (doc) =>
+      doc[vecCol] == null && textCol && typeof doc[textCol] === "string"
+        ? { ...doc, [vecCol]: await embed(doc[textCol] as string) }
+        : doc,
+    ),
+  );
+}
+
 // Search table functions are routed to the dedicated search tools instead of
-// infino_sql: calling one inside query_sql currently takes the engine's
-// multi-thread-only blocking bridge, which aborts when invoked from this
-// (async) host. Rejecting them here keeps the SQL tool to the paths that work
-// from the server today (plain filters/joins/aggregates); retrieval goes
-// through infino_semantic_search / infino_keyword_search.
+// infino_sql. This is now a usability policy, not a technical limit: search
+// TVFs through query_sql work from this async host (they once aborted via the
+// engine's blocking bridge; that's fixed). But hand-assembling a TVF call —
+// especially a vector literal — is error-prone for an agent, so retrieval goes
+// through the typed tools (infino_semantic_search / infino_keyword_search /
+// infino_hybrid_search), which build the call internally.
 const SEARCH_TVFS = ["bm25_search", "vector_search", "hybrid_search", "token_match", "exact_match"];
 
 // Guard for infino_sql. Two layers:
-//   - The search-TVF block is ALWAYS on. It is not a policy choice: calling a
-//     search table function inside query_sql takes the engine's
-//     multi-thread-only blocking bridge, which aborts this (async) host. So it
-//     is rejected regardless of the writes flag — retrieval goes through
-//     infino_semantic_search / infino_keyword_search.
+//   - The search-TVF block is ALWAYS on. It is a usability policy: search TVFs
+//     do work through query_sql now, but the typed retrieval tools are the
+//     intended interface (they handle embedding and projection), so free-form
+//     SQL is kept to filters/joins/aggregates and retrieval goes through them.
 //   - The read-only restriction (single statement, must start with SELECT/WITH)
 //     is policy, gated by the same INFINO_MCP_ENABLE_WRITES switch as
 //     infino_add_documents. Off → read-only only, so the default install can't
@@ -120,8 +148,8 @@ function guardSql(sql: string, allowWrites: boolean): string {
   const tvf = SEARCH_TVFS.find((fn) => new RegExp(`\\b${fn}\\s*\\(`, "i").test(stripped));
   if (tvf) {
     throw new Error(
-      `${tvf}() in SQL isn't supported from the MCP server yet — use infino_semantic_search or ` +
-        `infino_keyword_search for retrieval. infino_sql is for filters, joins, and aggregates over your tables.`,
+      `${tvf}() isn't available through infino_sql — use the dedicated retrieval tools (infino_keyword_search, ` +
+        `infino_semantic_search, infino_hybrid_search) instead. infino_sql is for filters, joins, and aggregates over your tables.`,
     );
   }
   if (!allowWrites && !/^(select|with)\b/i.test(stripped)) {
@@ -134,13 +162,35 @@ function guardSql(sql: string, allowWrites: boolean): string {
 
 // --- server ----------------------------------------------------------------
 
-const server = new McpServer({ name: "infino", version: "0.1.0" });
+// Server-level instructions are returned to the client on initialize and shown
+// to the model — the highest-leverage place to position Infino and steer which
+// tool fires when. Kept factual and answer-first (no keyword stuffing).
+const server = new McpServer(
+  { name: "infino", version: "0.1.0" },
+  {
+    instructions:
+      "Infino is an embedded retrieval engine for data on object storage: full-text (BM25), vector, " +
+      "hybrid, and SQL search over one copy of the data, in-process, with no separate server or managed " +
+      "service. These tools retrieve from a connected catalog of tables.\n\n" +
+      "Pick a tool by the question shape:\n" +
+      "- infino_keyword_search — literal terms, identifiers, error codes, names (ranked BM25).\n" +
+      "- infino_semantic_search — meaning or paraphrase when the exact wording is unknown; its optional " +
+      "'filter' restricts the ranking to rows matching a keyword predicate first.\n" +
+      "- infino_hybrid_search — a query carrying both specific terms and an intent (fuses keyword + semantic in one pass).\n" +
+      "- infino_sql — counts, joins, aggregates, and filtering by exact column value (structural, not relevance).\n" +
+      "- infino_token_match / infino_exact_match — unranked keyword / exact-equality filters.\n" +
+      "- infino_list_tables / infino_describe_table — discover the tables and their columns before searching.\n\n" +
+      "The server is read-only by default; document writes (add/update/delete) and DDL/DML SQL are available " +
+      "only when the operator has enabled writes.",
+  },
+);
 
 server.registerTool(
   "infino_list_tables",
   {
     title: "List Infino tables",
-    description: "List the names of the tables in the connected Infino catalog.",
+    description:
+      "List the tables in the connected catalog. Call this first to discover what is available to search or query.",
     inputSchema: {},
   },
   async () => {
@@ -157,7 +207,8 @@ server.registerTool(
   {
     title: "Describe an Infino table",
     description:
-      "Return a table's column names and types, so you know which column to search and what fields each result row carries.",
+      "Return a table's column names and types — call before searching so you know which column to target and what " +
+      "fields each result row carries.",
     inputSchema: {
       table: z.string().describe("Table name (from infino_list_tables)."),
     },
@@ -180,19 +231,34 @@ server.registerTool(
   {
     title: "Semantic (vector) search",
     description:
-      "Vector similarity search over a table's embedding column. Embeds the query text with a local model (no API " +
-      "key), then returns the rows whose stored vectors are nearest, each with a similarity score. Matches on meaning, " +
-      "so it also retrieves paraphrases and synonyms of the query, not only literal term matches. Prefer this over " +
-      "SQL LIKE when searching a free-text column for a concept whose exact wording is unknown (it retrieves paraphrases).",
+      "Use when searching for a concept by meaning and the exact wording is unknown — this retrieves paraphrases and " +
+      "synonyms, not just literal matches. Embeds the query with a local model (no API key) and ranks a table's " +
+      "embedding column by vector similarity, each hit with a score. Optional 'filter' restricts the ranking to rows " +
+      "whose keyword column matches a predicate first (a pushdown pre-filter, e.g. semantic search only within rows " +
+      "tagged 'billing'). For exact terms use infino_keyword_search; when the query has both literal terms and an " +
+      "intent use infino_hybrid_search.",
     inputSchema: {
       table: z.string().describe("Table to search."),
       query: z.string().describe("Query text; embedded and matched by vector similarity."),
       k: z.number().int().positive().max(100).default(10).describe("Maximum results."),
       column: z.string().optional().describe("Text column to return with each hit; inferred if omitted."),
       vectorColumn: z.string().optional().describe("Vector column to search; inferred if omitted."),
+      filter: z
+        .object({
+          column: z.string().describe("Keyword-indexed (FTS) column the predicate applies to."),
+          query: z.string().describe("Terms the column must match."),
+          mode: z
+            .enum(["or", "and"])
+            .optional()
+            .describe("Match any term ('or', the default) or every term ('and')."),
+        })
+        .optional()
+        .describe(
+          "Pre-filter: rank the kNN only among rows whose FTS 'column' matches 'query' (a pushdown pre-filter, not a post-filter on the results).",
+        ),
     },
   },
-  async ({ table, query, k, column, vectorColumn }) => {
+  async ({ table, query, k, column, vectorColumn, filter }) => {
     try {
       const handle = db.openTable(table);
       const vecCol = vectorColumn ?? inferVectorColumn(handle);
@@ -200,7 +266,7 @@ server.registerTool(
       const textCol = column ?? inferTextColumn(handle);
       const vector = await embed(query);
       const projection = textCol ? [textCol, "_id", "score"] : ["_id", "score"];
-      const results = handle.vectorSearch(vecCol, vector, k, { projection });
+      const results = handle.vectorSearch(vecCol, vector, k, { projection, filter });
       return ok({ table, query, results });
     } catch (err) {
       return fail(`semantic_search failed: ${(err as Error).message}`);
@@ -213,10 +279,11 @@ server.registerTool(
   {
     title: "Keyword (BM25) search",
     description:
-      "BM25 full-text search over a text column. Ranks rows by how well the query's literal terms match the column's " +
-      "tokens, returning each with a relevance score. Matches exact tokens (and their stems), not synonyms or " +
-      "paraphrases. No API key. Prefer this over SQL LIKE when searching a free-text column for known literal terms " +
-      "(error codes, names, exact phrases) and you want results ranked by relevance.",
+      "Use when the query is literal terms — identifiers, error codes, product names, exact phrases — and you want " +
+      "results ranked by relevance. BM25 full-text search over a text column: ranks rows by how well the query's " +
+      "tokens (and their stems) match, each with a relevance score. Matches exact tokens, not synonyms or paraphrases. " +
+      "Prefer this over SQL LIKE for known literal terms. For meaning-based search use infino_semantic_search; for " +
+      "both at once use infino_hybrid_search.",
     inputSchema: {
       table: z.string().describe("Table to search."),
       query: z.string().describe("Query terms, matched as literal tokens."),
@@ -243,16 +310,127 @@ server.registerTool(
 );
 
 server.registerTool(
+  "infino_hybrid_search",
+  {
+    title: "Hybrid (keyword + semantic) search",
+    description:
+      "Use when a query carries both specific terms and an intent — you want exact-term precision without giving up " +
+      "paraphrase recall. Fuses BM25 over a text column with vector similarity over the embedding column in a single " +
+      "ranking pass, so rows matching the literal terms AND the meaning rank highest. Embeds the query with a local " +
+      "model (no API key). Sits between infino_keyword_search (literal only) and infino_semantic_search (meaning only).",
+    inputSchema: {
+      table: z.string().describe("Table to search."),
+      query: z.string().describe("Query text; matched as keyword terms AND embedded for vector similarity."),
+      k: z.number().int().positive().max(100).default(10).describe("Maximum results."),
+      column: z.string().optional().describe("Text column for the keyword half; inferred if omitted."),
+      vectorColumn: z.string().optional().describe("Vector column for the semantic half; inferred if omitted."),
+    },
+  },
+  async ({ table, query, k, column, vectorColumn }) => {
+    try {
+      const handle = db.openTable(table);
+      const textCol = column ?? inferTextColumn(handle);
+      if (!textCol) return fail(`hybrid_search: no text column in '${table}' — pass 'column'.`);
+      const vecCol = vectorColumn ?? inferVectorColumn(handle);
+      if (!vecCol) return fail(`hybrid_search: no vector column in '${table}' — pass 'vectorColumn'.`);
+      const vector = await embed(query);
+      // hybrid_search is a SQL table-valued function (there is no typed binding
+      // method), so build the call internally — the agent never hand-assembles
+      // the vector literal. k is a validated positive int, safe to inline.
+      const cols = [sqlIdent(textCol), "_id", "score"].join(", ");
+      const sql =
+        `SELECT ${cols} FROM hybrid_search(` +
+        `${sqlStr(table)}, ${sqlStr(textCol)}, ${sqlStr(query)}, ` +
+        `${sqlStr(vecCol)}, ${sqlStr(vector.join(","))}, ${k})`;
+      const results = db.querySql(sql);
+      return ok({ table, query, results });
+    } catch (err) {
+      return fail(`hybrid_search failed: ${(err as Error).message}`);
+    }
+  },
+);
+
+server.registerTool(
+  "infino_token_match",
+  {
+    title: "Token match (unranked keyword filter)",
+    description:
+      "Use when you need the SET of rows containing a keyword, not a ranked order — a fast unranked keyword filter. " +
+      "Returns rows whose text column contains the token(s), matching indexed tokens and their stems. For ranked " +
+      "results use infino_keyword_search; for analytical filtering across columns use infino_sql.",
+    inputSchema: {
+      table: z.string().describe("Table to search."),
+      query: z.string().describe("Token(s) to match."),
+      column: z.string().optional().describe("Text column to match; inferred if omitted."),
+      mode: z
+        .enum(["or", "and"])
+        .optional()
+        .describe("Match any token ('or', the default) or every token ('and')."),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(1000)
+        .default(100)
+        .describe("Max rows to return; matches beyond this are counted in 'matched' but not returned."),
+    },
+  },
+  async ({ table, query, column, mode, limit }) => {
+    try {
+      const handle = db.openTable(table);
+      const col = column ?? inferTextColumn(handle);
+      if (!col) return fail(`token_match: no text column in '${table}' — pass 'column'.`);
+      const rows = handle.tokenMatch(col, query, { mode, projection: [col, "_id"] });
+      return ok({ table, column: col, query, matched: rows.length, results: rows.slice(0, limit) });
+    } catch (err) {
+      return fail(`token_match failed: ${(err as Error).message}`);
+    }
+  },
+);
+
+server.registerTool(
+  "infino_exact_match",
+  {
+    title: "Exact match (unranked exact filter)",
+    description:
+      "Use to fetch rows whose column exactly equals a value — a tag, status, or id string. Unranked exact-equality " +
+      "filter over an indexed column. For ranked text relevance use infino_keyword_search; for multi-column " +
+      "analytical filtering use infino_sql.",
+    inputSchema: {
+      table: z.string().describe("Table to search."),
+      value: z.string().describe("The exact value the column must equal."),
+      column: z.string().optional().describe("Column to match; inferred (first text column) if omitted."),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(1000)
+        .default(100)
+        .describe("Max rows to return; matches beyond this are counted in 'matched' but not returned."),
+    },
+  },
+  async ({ table, value, column, limit }) => {
+    try {
+      const handle = db.openTable(table);
+      const col = column ?? inferTextColumn(handle);
+      if (!col) return fail(`exact_match: no column found in '${table}' — pass 'column'.`);
+      const rows = handle.exactMatch(col, value, { projection: [col, "_id"] });
+      return ok({ table, column: col, value, matched: rows.length, results: rows.slice(0, limit) });
+    } catch (err) {
+      return fail(`exact_match failed: ${(err as Error).message}`);
+    }
+  },
+);
+
+server.registerTool(
   "infino_sql",
   {
     title: "SQL over Infino",
     description:
-      "Run SQL over the catalog's tables — counts, GROUP BY, filtering by column value, joins, aggregates — returning " +
-      "result rows. Row filters use literal/substring matching (e.g. LIKE), not ranked relevance. The engine's search " +
-      "table functions (bm25_search, vector_search) are not callable from SQL on this server. For ranked or " +
-      "meaning-based text search, use the infino_keyword_search and infino_semantic_search tools instead. " +
-      "Prefer this for structural or analytical questions (counts, joins, filtering by an exact column value), " +
-      "not for finding text by relevance. " +
+      "Use for structural or analytical questions — counts, GROUP BY, joins, aggregates, filtering by exact column " +
+      "value — returning result rows. Row filters use literal/substring matching (e.g. LIKE), not ranked relevance, so " +
+      "for ranked or meaning-based text search use infino_keyword_search / infino_semantic_search / infino_hybrid_search " +
+      "instead (the engine's search table functions are not callable here). " +
       (writesEnabled
         ? "Any single statement is allowed (including DDL/DML), since INFINO_MCP_ENABLE_WRITES is set."
         : "Read-only: a single SELECT / WITH statement; DDL/DML is rejected."),
@@ -293,23 +471,67 @@ if (writesEnabled) {
     async ({ table, documents }) => {
       try {
         const handle = db.openTable(table);
-        const vecCol = inferVectorColumn(handle);
-        const textCol = inferTextColumn(handle);
-        let rows = documents as Array<Record<string, unknown>>;
-        if (vecCol) {
-          // Embed the text column into the vector column for rows that omit it.
-          rows = await Promise.all(
-            rows.map(async (doc) =>
-              doc[vecCol] == null && textCol && typeof doc[textCol] === "string"
-                ? { ...doc, [vecCol]: await embed(doc[textCol] as string) }
-                : doc,
-            ),
-          );
-        }
+        const rows = await embedRows(handle, documents as Array<Record<string, unknown>>);
         handle.append(rows);
         return ok({ table, appended: rows.length });
       } catch (err) {
         return fail(`add_documents failed: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "infino_update_documents",
+    {
+      title: "Update documents in an Infino table",
+      description:
+        "Replace the rows matching a SQL predicate with new documents, 1:1 — the number of matched rows must equal " +
+        "the number of replacement documents. As with add, a row that omits its vector has it embedded from the text " +
+        "column (local model, no API key). Requires durable storage (not memory://). Available only because " +
+        "INFINO_MCP_ENABLE_WRITES is set.",
+      inputSchema: {
+        table: z.string().describe("Table to update."),
+        predicate: z
+          .string()
+          .describe("SQL predicate selecting the rows to replace, e.g. \"status = 'draft'\"."),
+        documents: z
+          .array(z.record(z.any()))
+          .min(1)
+          .describe("Replacement rows, as JSON objects keyed by column name (one per matched row)."),
+      },
+    },
+    async ({ table, predicate, documents }) => {
+      try {
+        const handle = db.openTable(table);
+        const rows = await embedRows(handle, documents as Array<Record<string, unknown>>);
+        const stats = handle.update(predicate, rows);
+        return ok({ table, predicate, ...stats });
+      } catch (err) {
+        return fail(`update_documents failed: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "infino_delete_documents",
+    {
+      title: "Delete documents from an Infino table",
+      description:
+        "Delete the rows matching a SQL predicate, e.g. \"status = 'spam'\". Returns how many rows matched and were " +
+        "removed. Requires durable storage (not memory://). Available only because INFINO_MCP_ENABLE_WRITES is set.",
+      inputSchema: {
+        table: z.string().describe("Table to delete from."),
+        predicate: z
+          .string()
+          .describe("SQL predicate selecting the rows to delete, e.g. \"status = 'spam'\"."),
+      },
+    },
+    async ({ table, predicate }) => {
+      try {
+        const stats = db.openTable(table).delete(predicate);
+        return ok({ table, predicate, ...stats });
+      } catch (err) {
+        return fail(`delete_documents failed: ${(err as Error).message}`);
       }
     },
   );

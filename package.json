@@ -2,6 +2,7 @@
   "name": "@infino-ai/mcp-server",
   "version": "0.1.0",
   "description": "MCP server for Infino — keyword, vector, and SQL retrieval over data on object storage, for AI agents.",
+  "mcpName": "io.github.infino-ai/mcp-server",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
@@ -25,7 +26,7 @@
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "infino": "^0.1.0",
+    "@infino-ai/infino": "^0.1.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
