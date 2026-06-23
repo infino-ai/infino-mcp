@@ -9,12 +9,11 @@ name: Publish (npm + MCP Registry)
 #      in package.json, so npm must publish first.
 #
 # npm auth is the classic NPM_TOKEN secret (publish rights under the infino-ai
-# org). Provenance is intentionally NOT emitted: npm provenance requires the
-# GitHub source repository to be public, and infino-ai/infino-mcp is private.
-# Re-add `NPM_CONFIG_PROVENANCE: "true"` to the publish step once the repo is
-# public. MCP Registry auth is GitHub OIDC (github-oidc) — no secret; the
-# id-token from this infino-ai/infino-mcp repo authorizes the
-# io.github.infino-ai/* namespace.
+# org). Provenance — the "built from this repo at this commit" attestation on
+# npmjs.org — is emitted via NPM_CONFIG_PROVENANCE + the OIDC id-token (requires
+# a public source repo, which infino-ai/infino-mcp now is). MCP Registry auth is
+# GitHub OIDC (github-oidc) — no secret; the id-token from this
+# infino-ai/infino-mcp repo authorizes the io.github.infino-ai/* namespace.
 #
 # Triggered manually. The default run is a dry run: it builds and validates,
 # publishing nothing. Re-run with dry_run unchecked to publish for real.
@@ -28,7 +27,7 @@ on:
         default: true
 
 permissions:
-  id-token: write # OIDC token for MCP Registry github-oidc auth
+  id-token: write # OIDC token: npm provenance + MCP Registry github-oidc auth
   contents: read
 
 jobs:
@@ -65,6 +64,7 @@ jobs:
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
 
       # --- stage 2: MCP Registry ---
       # Keep server.json's versions in lockstep with the package version so the
