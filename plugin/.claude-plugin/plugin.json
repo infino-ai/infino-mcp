@@ -1,0 +1,39 @@
+{
+  "name": "infino",
+  "displayName": "Infino",
+  "description": "Keyword, vector, hybrid, and SQL retrieval over data on object storage, for AI agents.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Infino",
+    "url": "https://github.com/infino-ai"
+  },
+  "homepage": "https://github.com/infino-ai/infino-mcp",
+  "repository": "https://github.com/infino-ai/infino-mcp",
+  "license": "Apache-2.0",
+  "keywords": [
+    "retrieval",
+    "search",
+    "vector",
+    "hybrid",
+    "bm25",
+    "sql",
+    "rag",
+    "agent-memory",
+    "object-storage",
+    "mcp"
+  ],
+  "userConfig": {
+    "infino_uri": {
+      "type": "string",
+      "title": "Infino data URI",
+      "description": "Data to serve: a local path (e.g. /Users/me/.infino/memory) or an s3://|gs://|az:// bucket URI.",
+      "required": true
+    },
+    "enable_writes": {
+      "type": "boolean",
+      "title": "Enable writes",
+      "description": "Expose the add/update/delete tools and allow DDL/DML through SQL. Leave off for a read-only server.",
+      "default": false
+    }
+  }
+}

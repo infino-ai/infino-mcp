@@ -1,0 +1,33 @@
+{
+  "name": "infino-ai",
+  "owner": {
+    "name": "Infino"
+  },
+  "description": "Infino — keyword, vector, hybrid, and SQL retrieval over data on object storage, for AI agents.",
+  "plugins": [
+    {
+      "name": "infino",
+      "source": "./plugin",
+      "description": "Retrieval over your data on object storage — bundles the Infino MCP server (keyword / vector / hybrid / SQL search), a how-to-use skill, and a /infino-search command.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Infino"
+      },
+      "homepage": "https://github.com/infino-ai/infino-mcp",
+      "license": "Apache-2.0",
+      "category": "search",
+      "keywords": [
+        "retrieval",
+        "search",
+        "vector",
+        "hybrid",
+        "bm25",
+        "sql",
+        "rag",
+        "agent-memory",
+        "object-storage",
+        "mcp"
+      ]
+    }
+  ]
+}

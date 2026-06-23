@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "infino": {
+      "command": "npx",
+      "args": ["-y", "@infino-ai/mcp-server"],
+      "env": {
+        "INFINO_MCP_URI": "${user_config.infino_uri}",
+        "INFINO_MCP_ENABLE_WRITES": "${user_config.enable_writes}"
+      }
+    }
+  }
+}

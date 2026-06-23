@@ -1,0 +1,37 @@
+# Smithery configuration for the Infino MCP server.
+#
+# Infino is a LOCAL (stdio) server: it runs on the user's machine via `npx` and
+# connects to their own data on object storage — there is no hosted HTTP URL, so
+# this is published via Smithery's GitHub-connected flow (this file), NOT the
+# "MCP Server URL" form. Smithery lists it for discovery and launches it with
+# the command below, prompting the user for the config schema.
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required:
+      - infinoMcpUri
+    properties:
+      infinoMcpUri:
+        type: string
+        title: Infino data URI
+        description: "Data to serve: a local path (e.g. /Users/me/.infino/memory) or an s3://|gs://|az:// bucket URI."
+      enableWrites:
+        type: boolean
+        default: false
+        title: Enable writes
+        description: "Expose the add/update/delete tools and allow DDL/DML through SQL. Leave off for a read-only server."
+      embedModel:
+        type: string
+        title: Embedding model (optional)
+        description: "Hugging Face feature-extraction model for local embedding (default Xenova/all-MiniLM-L6-v2, 384-dim)."
+  commandFunction: |
+    config => ({
+      command: 'npx',
+      args: ['-y', '@infino-ai/mcp-server'],
+      env: {
+        INFINO_MCP_URI: config.infinoMcpUri,
+        ...(config.enableWrites ? { INFINO_MCP_ENABLE_WRITES: 'true' } : {}),
+        ...(config.embedModel ? { INFINO_MCP_EMBED_MODEL: config.embedModel } : {})
+      }
+    })

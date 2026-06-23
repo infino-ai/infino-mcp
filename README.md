@@ -16,6 +16,7 @@ An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com
 
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
+- [Claude Code plugin (one-step install)](#claude-code-plugin-one-step-install)
 - [Client setup](#client-setup)
   - [Claude Code](#claude-code)
   - [Claude Desktop](#claude-desktop)
@@ -58,6 +59,19 @@ The server is launched by your MCP client over stdio — you don't run it direct
 ```
 
 The sections below show the exact place each client expects this block.
+
+---
+
+## Claude Code plugin (one-step install)
+
+For [Claude Code](https://claude.com/claude-code), this repo is also a plugin marketplace. Installing the plugin wires up the MCP server **plus** a how-to-use skill and an `/infino-search` command in one step — no JSON to edit. Inside Claude Code:
+
+```
+/plugin marketplace add infino-ai/infino-mcp
+/plugin install infino@infino-ai
+```
+
+On enable you'll be prompted for your **Infino data URI** (`INFINO_MCP_URI`) and whether to **enable writes**. That's it — the `infino_*` tools, the `using-infino` skill, and `/infino-search <query>` are then available. (Other clients: use the [Client setup](#client-setup) configs below.)
 
 ---
 
