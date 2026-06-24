@@ -6,20 +6,20 @@
     "url": "https://github.com/infino-ai/infino-mcp",
     "source": "github"
   },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@infino-ai/mcp-server",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
           "name": "INFINO_MCP_URI",
-          "description": "Data to serve: a local path or an s3://|gs://|az:// bucket URI.",
-          "isRequired": true,
+          "description": "Data to serve: a local path or an s3://|gs://|az:// bucket URI. Optional — defaults to an ephemeral in-process memory:// catalog if unset.",
+          "isRequired": false,
           "format": "string"
         },
         {
