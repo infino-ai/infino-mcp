@@ -46,7 +46,7 @@ An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com
 
 ## Quick start
 
-The server is launched by your MCP client over stdio — you don't run it directly in normal use. Every client config follows the same shape: command `npx -y @infino-ai/mcp-server`, with configuration supplied via environment variables. At minimum, set `INFINO_MCP_URI` to the data you want to serve.
+The server is launched by your MCP client over stdio — you don't run it directly in normal use. Every client config follows the same shape: command `npx -y @infino-ai/mcp-server`, with configuration supplied via environment variables. Set `INFINO_MCP_URI` to the data you want to serve — a local path or a bucket URI. If it's omitted, the server starts an ephemeral in-process catalog (`memory://`) that holds no data, so set it for any real use.
 
 ```jsonc
 {
@@ -178,7 +178,7 @@ All configuration is via environment variables — there are no config files and
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `INFINO_MCP_URI` | **Yes** | — | Data to serve: a local path (`/Users/me/.infino/memory`) or a bucket URI (`s3://…`, `gs://…`, `az://…`). |
+| `INFINO_MCP_URI` | No | `memory://` (ephemeral) | Data to serve: a local path (`/Users/me/.infino/memory`) or a bucket URI (`s3://…`, `gs://…`, `az://…`). If unset, an ephemeral in-process catalog is used (holds no data) — set it for any real use. |
 | `INFINO_MCP_ENABLE_WRITES` | No | _off_ | When set (`1`/`true`/`yes`), exposes `infino_add_documents` **and** lets `infino_sql` run DDL/DML. Omit for a strictly read-only server. |
 | `INFINO_MCP_EMBED_MODEL` | No | `Xenova/all-MiniLM-L6-v2` | Hugging Face feature-extraction model used for embedding. Must match the table's vector index dimension (default model is 384-dim). |
 | `INFINO_MCP_S3_ENDPOINT` | No | — | Custom S3 endpoint for non-AWS S3-compatible stores (Cloudflare R2, MinIO, Backblaze B2, …). |

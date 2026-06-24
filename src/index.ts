@@ -23,13 +23,17 @@ import { embed, embedderInfo } from "./embedding.js";
 // INFINO_MCP_S3_ENDPOINT (and optionally INFINO_MCP_S3_REGION) alongside
 // AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. GCS/Azure use GOOGLE_*/AZURE_* creds.
 
-const uri = process.env.INFINO_MCP_URI;
-if (!uri) {
+// Default to an ephemeral in-process catalog so the server always starts.
+// Registry health checks (e.g. Glama) spawn the server with no env set; a hard
+// exit here would leave it permanently "unhealthy"/unlisted. Real deployments
+// set INFINO_MCP_URI to a local path or an s3://|gs://|az:// URI to serve
+// persistent data.
+const uri = process.env.INFINO_MCP_URI ?? "memory://";
+if (!process.env.INFINO_MCP_URI) {
   console.error(
-    "INFINO_MCP_URI is required — a local path (e.g. /Users/me/.infino/memory) " +
-      "or an s3://|gs://|az:// URI for the data to serve.",
+    "INFINO_MCP_URI not set — serving an ephemeral in-process catalog (memory://). " +
+      "Set INFINO_MCP_URI to a local path or an s3://|gs://|az:// URI to serve persistent data.",
   );
-  process.exit(1);
 }
 
 // A custom S3 endpoint (non-AWS S3-compatible store) requires the region and
