@@ -8,6 +8,9 @@
 // search, unranked token/exact match, and read-only SQL; document writes
 // (add/update/delete) and full SQL are opt-in behind INFINO_MCP_ENABLE_WRITES.
 
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -17,45 +20,77 @@ import { embed, embedderInfo } from "./embedding.js";
 // --- connection (env-configured, opened once at startup) -------------------
 //
 // The agent never manages connections: the server is pointed at the data via
-// INFINO_MCP_URI (a local path, or the user's own s3://|gs://|az:// bucket).
-// AWS S3 uses the default endpoint + ambient AWS_* creds. For any other
-// S3-compatible store (Cloudflare R2, MinIO, Backblaze B2, …) set
-// INFINO_MCP_S3_ENDPOINT (and optionally INFINO_MCP_S3_REGION) alongside
-// AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. GCS/Azure use GOOGLE_*/AZURE_* creds.
+// INFINO_MCP_URI (a local path, or the user's own s3://|az:// bucket).
+// Credentials come from the standard AWS_*/AZURE_* environment variables. AWS
+// S3 uses the default endpoint; for any S3-compatible store (Cloudflare R2,
+// MinIO, Backblaze B2, …) set AWS_ENDPOINT_URL alongside the AWS_* keys.
 
-// Default to an ephemeral in-process catalog so the server always starts.
-// Registry health checks (e.g. Glama) spawn the server with no env set; a hard
-// exit here would leave it permanently "unhealthy"/unlisted. Real deployments
-// set INFINO_MCP_URI to a local path or an s3://|gs://|az:// URI to serve
-// persistent data.
-const uri = process.env.INFINO_MCP_URI ?? "memory://";
-if (!process.env.INFINO_MCP_URI) {
-  console.error(
-    "INFINO_MCP_URI not set — serving an ephemeral in-process catalog (memory://). " +
-      "Set INFINO_MCP_URI to a local path or an s3://|gs://|az:// URI to serve persistent data.",
-  );
-}
-
-// A custom S3 endpoint (non-AWS S3-compatible store) requires the region and
-// access/secret keys to be supplied with it; AWS S3 needs none of this.
-let connectOptions: ConnectOptions | undefined;
-const s3Endpoint = process.env.INFINO_MCP_S3_ENDPOINT;
-if (s3Endpoint) {
-  const accessKey = process.env.AWS_ACCESS_KEY_ID;
-  const secretKey = process.env.AWS_SECRET_ACCESS_KEY;
-  if (!accessKey || !secretKey) {
+// When INFINO_MCP_URI is unset, default to a durable per-user directory so a
+// fresh install persists across restarts with no configuration. Fall back to
+// an ephemeral in-process catalog if that directory can't be created (a
+// sandboxed or read-only host, or a registry health-check spawn): the server
+// must always start — a hard exit would leave it permanently "unhealthy".
+// Real deployments set INFINO_MCP_URI to their own path or an s3://|az:// URI.
+function defaultUri(): string {
+  const dir = join(homedir(), ".infino", "mcp");
+  try {
+    mkdirSync(dir, { recursive: true });
     console.error(
-      "INFINO_MCP_S3_ENDPOINT is set but AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are missing.",
+      `INFINO_MCP_URI not set — using ${dir} (persistent; read-only until ` +
+        "INFINO_MCP_ENABLE_WRITES is set). Set INFINO_MCP_URI to point at your " +
+        "own path or an s3://|az:// bucket.",
     );
-    process.exit(1);
+    return dir;
+  } catch (err) {
+    console.error(
+      `INFINO_MCP_URI not set and ${dir} is not writable ` +
+        `(${(err as Error).message}) — serving an ephemeral in-process ` +
+        "catalog (memory://).",
+    );
+    return "memory://";
   }
-  connectOptions = {
-    endpoint: s3Endpoint,
-    region: process.env.INFINO_MCP_S3_REGION ?? "auto",
-    accessKey,
-    secretKey,
-  };
 }
+
+const uri = process.env.INFINO_MCP_URI ?? defaultUri();
+
+// infino reads no credentials from the environment, so gather the standard
+// provider variables here and hand them to connect as storageOptions, keyed
+// by object_store's aws_*/azure_* config strings. Leaving them all unset
+// falls back to ambient cloud identity (an IAM instance role or Azure managed
+// identity).
+const storageOptions: Record<string, string> = {};
+const addStorageOption = (key: string, value: string | undefined) => {
+  if (value) storageOptions[key] = value;
+};
+
+// S3, and S3-compatible stores (Cloudflare R2 / MinIO / Backblaze B2) via a
+// custom endpoint.
+addStorageOption("aws_access_key_id", process.env.AWS_ACCESS_KEY_ID);
+addStorageOption("aws_secret_access_key", process.env.AWS_SECRET_ACCESS_KEY);
+addStorageOption("aws_session_token", process.env.AWS_SESSION_TOKEN);
+addStorageOption("aws_region", process.env.AWS_REGION);
+const s3Endpoint = process.env.AWS_ENDPOINT_URL;
+if (s3Endpoint) {
+  storageOptions.aws_endpoint = s3Endpoint;
+  // A custom endpoint needs a region; default to "auto" (what R2 expects).
+  if (!storageOptions.aws_region) storageOptions.aws_region = "auto";
+  // object_store rejects a plain-HTTP endpoint unless HTTP is allowed.
+  if (s3Endpoint.startsWith("http://")) storageOptions.aws_allow_http = "true";
+}
+
+// Azure Blob.
+addStorageOption("azure_storage_account_name", process.env.AZURE_STORAGE_ACCOUNT);
+addStorageOption("azure_storage_account_key", process.env.AZURE_STORAGE_KEY);
+
+// Opt into a connect-time probe so bad credentials or an unreachable bucket
+// fail at startup instead of on the first search.
+const validate = ["1", "true", "yes"].includes(
+  (process.env.INFINO_MCP_VALIDATE ?? "").toLowerCase(),
+);
+
+const connectOptions: ConnectOptions = {};
+if (Object.keys(storageOptions).length > 0) connectOptions.storageOptions = storageOptions;
+if (validate) connectOptions.validate = true;
 
 let db: ReturnType<typeof connect>;
 try {

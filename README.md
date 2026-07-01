@@ -8,7 +8,7 @@ An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com
 
 - **No API key.** Semantic search embeds queries with a local model — nothing leaves the machine for embedding.
 - **Read-only by default.** Writes and full SQL are opt-in behind a single environment flag.
-- **Bring your own storage.** Point it at a local path or your own bucket (S3, GCS, Azure, or any S3-compatible store).
+- **Bring your own storage.** Point it at a local path or your own bucket (S3, Azure, or any S3-compatible store).
 
 ---
 
@@ -46,7 +46,7 @@ An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com
 
 ## Quick start
 
-The server is launched by your MCP client over stdio — you don't run it directly in normal use. Every client config follows the same shape: command `npx -y @infino-ai/mcp-server`, with configuration supplied via environment variables. Set `INFINO_MCP_URI` to the data you want to serve — a local path or a bucket URI. If it's omitted, the server starts an ephemeral in-process catalog (`memory://`) that holds no data, so set it for any real use.
+The server is launched by your MCP client over stdio — you don't run it directly in normal use. Every client config follows the same shape: command `npx -y @infino-ai/mcp-server`, with configuration supplied via environment variables. Set `INFINO_MCP_URI` to the data you want to serve — a local path or a bucket URI. If it's omitted, the server uses a durable per-user directory (`~/.infino/mcp`) so data persists across restarts; point `INFINO_MCP_URI` at your own path or bucket to serve existing data.
 
 ```jsonc
 {
@@ -178,19 +178,17 @@ All configuration is via environment variables — there are no config files and
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `INFINO_MCP_URI` | No | `memory://` (ephemeral) | Data to serve: a local path (`/Users/me/.infino/memory`) or a bucket URI (`s3://…`, `gs://…`, `az://…`). If unset, an ephemeral in-process catalog is used (holds no data) — set it for any real use. |
+| `INFINO_MCP_URI` | No | `~/.infino/mcp` (persistent) | Data to serve: a local path (`/Users/me/.infino/memory`) or a bucket URI (`s3://…`, `az://…`). If unset, a durable per-user directory (`~/.infino/mcp`) is used so data persists across restarts; it falls back to an ephemeral in-process catalog (`memory://`) only if that directory can't be created. |
 | `INFINO_MCP_ENABLE_WRITES` | No | _off_ | When set (`1`/`true`/`yes`), exposes `infino_add_documents` **and** lets `infino_sql` run DDL/DML. Omit for a strictly read-only server. |
 | `INFINO_MCP_EMBED_MODEL` | No | `Xenova/all-MiniLM-L6-v2` | Hugging Face feature-extraction model used for embedding. Must match the table's vector index dimension (default model is 384-dim). |
-| `INFINO_MCP_S3_ENDPOINT` | No | — | Custom S3 endpoint for non-AWS S3-compatible stores (Cloudflare R2, MinIO, Backblaze B2, …). |
-| `INFINO_MCP_S3_REGION` | No | `auto` | Region to send with a custom S3 endpoint. |
+| `INFINO_MCP_VALIDATE` | No | _off_ | When set (`1`/`true`/`yes`), probes the object store at startup so bad credentials or an unreachable bucket fail then instead of on the first search. |
 
-Cloud credentials are read from the standard provider environment variables — the server does not introduce its own:
+Cloud credentials are read from the standard provider environment variables — the server maps them to the store's config and introduces no credential vars of its own. Omit them entirely to use ambient cloud identity (an IAM instance role or Azure managed identity).
 
 | Backend | Credentials |
 | --- | --- |
-| AWS S3 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (+ `AWS_SESSION_TOKEN` if used) |
-| S3-compatible (R2/MinIO/B2) | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` **and** `INFINO_MCP_S3_ENDPOINT` |
-| Google Cloud Storage | `GOOGLE_APPLICATION_CREDENTIALS` (or ambient ADC) |
+| AWS S3 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (+ `AWS_SESSION_TOKEN`, `AWS_REGION` if used) |
+| S3-compatible (R2/MinIO/B2) | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` **and** `AWS_ENDPOINT_URL` |
 | Azure Blob | `AZURE_STORAGE_ACCOUNT`, `AZURE_STORAGE_KEY` |
 
 ### Storage backends
@@ -209,10 +207,16 @@ Cloud credentials are read from the standard provider environment variables — 
 // S3-compatible (Cloudflare R2 / MinIO / Backblaze B2) — custom endpoint
 "env": {
   "INFINO_MCP_URI": "s3://my-bucket/infino",
-  "INFINO_MCP_S3_ENDPOINT": "https://<account>.r2.cloudflarestorage.com",
-  "INFINO_MCP_S3_REGION": "auto",
+  "AWS_ENDPOINT_URL": "https://<account>.r2.cloudflarestorage.com",
   "AWS_ACCESS_KEY_ID": "…",
   "AWS_SECRET_ACCESS_KEY": "…"
+}
+
+// Azure Blob
+"env": {
+  "INFINO_MCP_URI": "az://my-container/infino",
+  "AZURE_STORAGE_ACCOUNT": "…",
+  "AZURE_STORAGE_KEY": "…"
 }
 ```
 
