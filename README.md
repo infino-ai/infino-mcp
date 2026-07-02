@@ -231,6 +231,7 @@ Cloud credentials are read from the standard provider environment variables — 
 | `infino_hybrid_search` | `table`, `query`, `k`, `column?`, `vectorColumn?` | **Fused** keyword + semantic search in one ranking pass — BM25 over the text column combined with vector similarity, so rows matching the literal terms *and* the meaning rank highest. |
 | `infino_token_match` | `table`, `query`, `column?`, `mode?`, `limit?` | Unranked keyword filter — the set of rows whose text column contains the token(s). Use when you need the matches, not a relevance order. |
 | `infino_exact_match` | `table`, `value`, `column?`, `limit?` | Unranked exact-equality filter over an indexed column (tag, status, id string). |
+| `infino_count` | `table`, `query`, `column?`, `mode?` | Count how many rows match a keyword query, without fetching them — a fast tally over the text column. For the matching rows use `infino_keyword_search` or `infino_token_match`. |
 | `infino_sql` | `query` | SQL for counts, filters, joins, aggregates. Read-only (single `SELECT`/`WITH`) by default; accepts any single statement when `INFINO_MCP_ENABLE_WRITES` is set. |
 | `infino_list_tables` | — | List the tables in the connected catalog. |
 | `infino_describe_table` | `table` | Column names and types for a table. |

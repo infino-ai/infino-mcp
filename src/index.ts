@@ -118,13 +118,6 @@ const fail = (message: string) => ({
   isError: true,
 });
 
-// SQL literal / identifier quoting. The hybrid_search tool builds SQL from
-// caller-supplied table/column names and query text, so every interpolated
-// value is escaped: string args become single-quoted literals, column names
-// become double-quoted identifiers.
-const sqlStr = (s: string) => `'${s.replace(/'/g, "''")}'`;
-const sqlIdent = (s: string) => `"${s.replace(/"/g, '""')}"`;
-
 // When the caller doesn't name a column, search the first UTF-8 text column in
 // the table's schema. (A table can have several; an explicit `column` overrides.)
 function inferTextColumn(table: { schema(): { fields: Array<{ name: string; type: unknown }> } }):
@@ -373,15 +366,9 @@ server.registerTool(
       const vecCol = vectorColumn ?? inferVectorColumn(handle);
       if (!vecCol) return fail(`hybrid_search: no vector column in '${table}' — pass 'vectorColumn'.`);
       const vector = await embed(query);
-      // hybrid_search is a SQL table-valued function (there is no typed binding
-      // method), so build the call internally — the agent never hand-assembles
-      // the vector literal. k is a validated positive int, safe to inline.
-      const cols = [sqlIdent(textCol), "_id", "score"].join(", ");
-      const sql =
-        `SELECT ${cols} FROM hybrid_search(` +
-        `${sqlStr(table)}, ${sqlStr(textCol)}, ${sqlStr(query)}, ` +
-        `${sqlStr(vecCol)}, ${sqlStr(vector.join(","))}, ${k})`;
-      const results = db.querySql(sql);
+      const results = handle.hybridSearch(textCol, query, vecCol, vector, k, {
+        projection: [textCol, "_id", "score"],
+      });
       return ok({ table, query, results });
     } catch (err) {
       return fail(`hybrid_search failed: ${(err as Error).message}`);
@@ -457,6 +444,42 @@ server.registerTool(
       return ok({ table, column: col, value, matched: rows.length, results: rows.slice(0, limit) });
     } catch (err) {
       return fail(`exact_match failed: ${(err as Error).message}`);
+    }
+  },
+);
+
+server.registerTool(
+  "infino_count",
+  {
+    title: "Count keyword matches",
+    description:
+      "Use when you only need HOW MANY rows match a keyword query, not the rows themselves — a fast tally over a text " +
+      "column, without fetching or ranking. Cheaper than infino_keyword_search when a number is all you need (e.g. " +
+      "'how many docs mention X'). For the matching rows use infino_keyword_search or infino_token_match.",
+    inputSchema: {
+      table: z.string().describe("Table to search."),
+      query: z.string().describe("Query terms, matched as literal tokens."),
+      column: z
+        .string()
+        .optional()
+        .describe("Text column to search; inferred from the table schema when omitted."),
+      mode: z
+        .enum(["or", "and"])
+        .optional()
+        .describe("Match any token ('or', the default) or every token ('and')."),
+    },
+  },
+  async ({ table, query, column, mode }) => {
+    try {
+      const handle = db.openTable(table);
+      const col = column ?? inferTextColumn(handle);
+      if (!col) {
+        return fail(`count: no text column found in '${table}' — pass 'column' explicitly.`);
+      }
+      const count = handle.count(col, query, { mode });
+      return ok({ table, column: col, query, count });
+    } catch (err) {
+      return fail(`count failed: ${(err as Error).message}`);
     }
   },
 );
