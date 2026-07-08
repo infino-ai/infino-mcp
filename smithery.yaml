@@ -21,10 +21,24 @@ startCommand:
         default: false
         title: Enable writes
         description: "Expose the add/update/delete tools and allow DDL/DML through SQL. Leave off for a read-only server."
+      embedProvider:
+        type: string
+        enum: [local, openai]
+        default: local
+        title: Embedding provider (optional)
+        description: "local (Hugging Face, no key) or openai (any OpenAI-compatible /embeddings endpoint, incl. Azure OpenAI /openai/v1)."
+      embedBaseUrl:
+        type: string
+        title: Embedding base URL (openai only)
+        description: "Base URL of the OpenAI-compatible embeddings API, e.g. https://<resource>.openai.azure.com/openai/v1. Required when provider is openai."
+      embedApiKey:
+        type: string
+        title: Embedding API key (openai only)
+        description: "API key for the openai provider. Sent as both Authorization: Bearer and api-key."
       embedModel:
         type: string
         title: Embedding model (optional)
-        description: "Hugging Face feature-extraction model for local embedding (default Xenova/all-MiniLM-L6-v2, 384-dim)."
+        description: "Model that produced the table's vectors. local: a Hugging Face feature-extraction model (default Xenova/all-MiniLM-L6-v2, 384-dim). openai: the model/deployment name (e.g. text-embedding-3-small, 1536-dim)."
   commandFunction: |
     config => ({
       command: 'npx',
@@ -32,6 +46,9 @@ startCommand:
       env: {
         INFINO_MCP_URI: config.infinoMcpUri,
         ...(config.enableWrites ? { INFINO_MCP_ENABLE_WRITES: 'true' } : {}),
+        ...(config.embedProvider ? { INFINO_MCP_EMBED_PROVIDER: config.embedProvider } : {}),
+        ...(config.embedBaseUrl ? { INFINO_MCP_EMBED_BASE_URL: config.embedBaseUrl } : {}),
+        ...(config.embedApiKey ? { INFINO_MCP_EMBED_API_KEY: config.embedApiKey } : {}),
         ...(config.embedModel ? { INFINO_MCP_EMBED_MODEL: config.embedModel } : {})
       }
     })

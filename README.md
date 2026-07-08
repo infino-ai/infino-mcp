@@ -180,10 +180,27 @@ All configuration is via environment variables — there are no config files and
 | --- | --- | --- | --- |
 | `INFINO_MCP_URI` | No | `~/.infino/mcp` (persistent) | Data to serve: a local path (`/Users/me/.infino/memory`) or a bucket URI (`s3://…`, `az://…`). If unset, a durable per-user directory (`~/.infino/mcp`) is used so data persists across restarts; it falls back to an ephemeral in-process catalog (`memory://`) only if that directory can't be created. |
 | `INFINO_MCP_ENABLE_WRITES` | No | _off_ | When set (`1`/`true`/`yes`), exposes `infino_add_documents` **and** lets `infino_sql` run DDL/DML. Omit for a strictly read-only server. |
-| `INFINO_MCP_EMBED_MODEL` | No | `Xenova/all-MiniLM-L6-v2` | Hugging Face feature-extraction model used for embedding. Must match the table's vector index dimension (default model is 384-dim). |
+| `INFINO_MCP_EMBED_PROVIDER` | No | `local` | Embedding provider: `local` (Hugging Face transformers.js, no key, nothing leaves the machine) or `openai` (any OpenAI-compatible `/embeddings` endpoint — OpenAI, Azure OpenAI's `/openai/v1` surface, or a compatible server). Inferred as `openai` when `INFINO_MCP_EMBED_BASE_URL` is set. |
+| `INFINO_MCP_EMBED_BASE_URL` | With `openai` | — | Base URL of the OpenAI-compatible embeddings API, e.g. `https://api.openai.com/v1` or `https://<resource>.openai.azure.com/openai/v1`. The server POSTs to `<base>/embeddings`. |
+| `INFINO_MCP_EMBED_API_KEY` | No | — | API key for the `openai` provider. Sent as both `Authorization: Bearer` and `api-key`, so one value works for OpenAI and Azure OpenAI. Omit to call an unauthenticated or ambient-identity endpoint. |
+| `INFINO_MCP_EMBED_MODEL` | No | `Xenova/all-MiniLM-L6-v2` (local) · `text-embedding-3-small` (openai) | The embedding model. For `local`, a Hugging Face feature-extraction model; for `openai`, the model/deployment name. **Must match the model that produced the table's stored vectors** — and therefore its vector-index dimension (e.g. `text-embedding-3-small` is 1536-dim; the default local model is 384-dim). |
 | `INFINO_MCP_VALIDATE` | No | _off_ | When set (`1`/`true`/`yes`), probes the object store at startup so bad credentials or an unreachable bucket fail then instead of on the first search. |
 
 Cloud credentials are read from the standard provider environment variables — the server maps them to the store's config and introduces no credential vars of its own. Omit them entirely to use ambient cloud identity (an IAM instance role or Azure managed identity).
+
+**Serving a catalog embedded with OpenAI / Azure OpenAI.** If your tables were vectorized with a hosted embedding model rather than the local default, point the server at that same model so query and document vectors align:
+
+```jsonc
+"env": {
+  "INFINO_MCP_URI": "s3://my-bucket/infino",
+  "INFINO_MCP_EMBED_PROVIDER": "openai",
+  "INFINO_MCP_EMBED_BASE_URL": "https://my-resource.openai.azure.com/openai/v1",
+  "INFINO_MCP_EMBED_API_KEY": "…",
+  "INFINO_MCP_EMBED_MODEL": "text-embedding-3-small"
+}
+```
+
+The model must match what produced the stored vectors — a mismatch yields meaningless similarity or a dimension error. Keyword and SQL search are unaffected by the embedder.
 
 | Backend | Credentials |
 | --- | --- |

@@ -6,12 +6,12 @@
     "url": "https://github.com/infino-ai/infino-mcp",
     "source": "github"
   },
-  "version": "0.2.0",
+  "version": "0.3.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@infino-ai/mcp-server",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "transport": {
         "type": "stdio"
       },
@@ -29,8 +29,26 @@
           "format": "string"
         },
         {
+          "name": "INFINO_MCP_EMBED_PROVIDER",
+          "description": "Embedding provider: 'local' (Hugging Face transformers.js, default) or 'openai' (any OpenAI-compatible /embeddings endpoint, including Azure OpenAI's /openai/v1 surface). Inferred as 'openai' when INFINO_MCP_EMBED_BASE_URL is set.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "INFINO_MCP_EMBED_BASE_URL",
+          "description": "Base URL of the OpenAI-compatible embeddings API (e.g. https://api.openai.com/v1 or https://<resource>.openai.azure.com/openai/v1). Required when the provider is 'openai'; the server POSTs to <base>/embeddings.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "INFINO_MCP_EMBED_API_KEY",
+          "description": "API key for the 'openai' provider. Sent as both Authorization: Bearer and api-key so one value works for OpenAI and Azure OpenAI.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
           "name": "INFINO_MCP_EMBED_MODEL",
-          "description": "Hugging Face feature-extraction model for local embedding (default Xenova/all-MiniLM-L6-v2, 384-dim).",
+          "description": "Embedding model. local: a Hugging Face feature-extraction model (default Xenova/all-MiniLM-L6-v2, 384-dim). openai: the model/deployment name (e.g. text-embedding-3-small, 1536-dim). Must match the model that produced the table's stored vectors.",
           "isRequired": false,
           "format": "string"
         },
