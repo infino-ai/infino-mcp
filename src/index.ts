@@ -258,6 +258,19 @@ server.registerTool(
   },
 );
 
+// Build the returned-column projection for a search hit. A caller-supplied
+// `columns` list is honored so clients can retrieve the fields they need
+// (e.g. a path + line range to cite), with `_id` and `score` always appended
+// so every hit keeps its id and ranking score. Defaults to the (searched)
+// text column plus `_id`/`score`.
+function searchProjection(
+  columns: string[] | undefined,
+  textCol: string | undefined,
+): string[] {
+  const base = columns && columns.length > 0 ? columns : textCol ? [textCol] : [];
+  return [...new Set([...base, "_id", "score"])];
+}
+
 server.registerTool(
   "infino_semantic_search",
   {
@@ -275,6 +288,12 @@ server.registerTool(
       k: z.number().int().positive().max(100).default(10).describe("Maximum results."),
       column: z.string().optional().describe("Text column to return with each hit; inferred if omitted."),
       vectorColumn: z.string().optional().describe("Vector column to search; inferred if omitted."),
+      columns: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Columns to return with each hit (e.g. an id, path, or line range to cite). Defaults to the text column; '_id' and 'score' are always included.",
+        ),
       filter: z
         .object({
           column: z.string().describe("Keyword-indexed (FTS) column the predicate applies to."),
@@ -290,14 +309,14 @@ server.registerTool(
         ),
     },
   },
-  async ({ table, query, k, column, vectorColumn, filter }) => {
+  async ({ table, query, k, column, vectorColumn, columns, filter }) => {
     try {
       const handle = db.openTable(table);
       const vecCol = vectorColumn ?? inferVectorColumn(handle);
       if (!vecCol) return fail(`semantic_search: no vector column in '${table}' — pass 'vectorColumn'.`);
       const textCol = column ?? inferTextColumn(handle);
       const vector = await embed(query);
-      const projection = textCol ? [textCol, "_id", "score"] : ["_id", "score"];
+      const projection = searchProjection(columns, textCol);
       const results = handle.vectorSearch(vecCol, vector, k, { projection, filter });
       return ok({ table, query, results });
     } catch (err) {
@@ -324,16 +343,22 @@ server.registerTool(
         .string()
         .optional()
         .describe("Text column to search; inferred from the table schema when omitted."),
+      columns: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Columns to return with each hit (e.g. an id, path, or line range to cite). Defaults to the searched column; '_id' and 'score' are always included.",
+        ),
     },
   },
-  async ({ table, query, k, column }) => {
+  async ({ table, query, k, column, columns }) => {
     try {
       const handle = db.openTable(table);
       const col = column ?? inferTextColumn(handle);
       if (!col) {
         return fail(`keyword_search: no text column found in '${table}' — pass 'column' explicitly.`);
       }
-      const results = handle.bm25Search(col, query, k, { projection: [col, "_id", "score"] });
+      const results = handle.bm25Search(col, query, k, { projection: searchProjection(columns, col) });
       return ok({ table, column: col, query, results });
     } catch (err) {
       return fail(`keyword_search failed: ${(err as Error).message}`);
@@ -356,9 +381,15 @@ server.registerTool(
       k: z.number().int().positive().max(100).default(10).describe("Maximum results."),
       column: z.string().optional().describe("Text column for the keyword half; inferred if omitted."),
       vectorColumn: z.string().optional().describe("Vector column for the semantic half; inferred if omitted."),
+      columns: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Columns to return with each hit (e.g. an id, path, or line range to cite). Defaults to the text column; '_id' and 'score' are always included.",
+        ),
     },
   },
-  async ({ table, query, k, column, vectorColumn }) => {
+  async ({ table, query, k, column, vectorColumn, columns }) => {
     try {
       const handle = db.openTable(table);
       const textCol = column ?? inferTextColumn(handle);
@@ -367,7 +398,7 @@ server.registerTool(
       if (!vecCol) return fail(`hybrid_search: no vector column in '${table}' — pass 'vectorColumn'.`);
       const vector = await embed(query);
       const results = handle.hybridSearch(textCol, query, vecCol, vector, k, {
-        projection: [textCol, "_id", "score"],
+        projection: searchProjection(columns, textCol),
       });
       return ok({ table, query, results });
     } catch (err) {
