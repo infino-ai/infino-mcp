@@ -113,6 +113,15 @@ const toText = (value: unknown) =>
   JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v), 2);
 
 const ok = (value: unknown) => ({ content: [{ type: "text" as const, text: toText(value) }] });
+
+// Wall-clock of a synchronous engine call, so results can carry the true engine
+// time (`took_ms`) — this excludes query embedding and the MCP/stdio transport,
+// which the client can't isolate from its own round-trip timing.
+function timed<T>(fn: () => T): { value: T; tookMs: number } {
+  const t0 = performance.now();
+  const value = fn();
+  return { value, tookMs: Math.round((performance.now() - t0) * 1000) / 1000 };
+}
 const fail = (message: string) => ({
   content: [{ type: "text" as const, text: message }],
   isError: true,
@@ -317,8 +326,8 @@ server.registerTool(
       const textCol = column ?? inferTextColumn(handle);
       const vector = await embed(query);
       const projection = searchProjection(columns, textCol);
-      const results = handle.vectorSearch(vecCol, vector, k, { projection, filter });
-      return ok({ table, query, results });
+      const { value: results, tookMs } = timed(() => handle.vectorSearch(vecCol, vector, k, { projection, filter }));
+      return ok({ table, query, results, took_ms: tookMs });
     } catch (err) {
       return fail(`semantic_search failed: ${(err as Error).message}`);
     }
@@ -358,8 +367,10 @@ server.registerTool(
       if (!col) {
         return fail(`keyword_search: no text column found in '${table}' — pass 'column' explicitly.`);
       }
-      const results = handle.bm25Search(col, query, k, { projection: searchProjection(columns, col) });
-      return ok({ table, column: col, query, results });
+      const { value: results, tookMs } = timed(() =>
+        handle.bm25Search(col, query, k, { projection: searchProjection(columns, col) }),
+      );
+      return ok({ table, column: col, query, results, took_ms: tookMs });
     } catch (err) {
       return fail(`keyword_search failed: ${(err as Error).message}`);
     }
@@ -397,10 +408,12 @@ server.registerTool(
       const vecCol = vectorColumn ?? inferVectorColumn(handle);
       if (!vecCol) return fail(`hybrid_search: no vector column in '${table}' — pass 'vectorColumn'.`);
       const vector = await embed(query);
-      const results = handle.hybridSearch(textCol, query, vecCol, vector, k, {
-        projection: searchProjection(columns, textCol),
-      });
-      return ok({ table, query, results });
+      const { value: results, tookMs } = timed(() =>
+        handle.hybridSearch(textCol, query, vecCol, vector, k, {
+          projection: searchProjection(columns, textCol),
+        }),
+      );
+      return ok({ table, query, results, took_ms: tookMs });
     } catch (err) {
       return fail(`hybrid_search failed: ${(err as Error).message}`);
     }
@@ -437,8 +450,8 @@ server.registerTool(
       const handle = db.openTable(table);
       const col = column ?? inferTextColumn(handle);
       if (!col) return fail(`token_match: no text column in '${table}' — pass 'column'.`);
-      const rows = handle.tokenMatch(col, query, { mode, projection: [col, "_id"] });
-      return ok({ table, column: col, query, matched: rows.length, results: rows.slice(0, limit) });
+      const { value: rows, tookMs } = timed(() => handle.tokenMatch(col, query, { mode, projection: [col, "_id"] }));
+      return ok({ table, column: col, query, matched: rows.length, results: rows.slice(0, limit), took_ms: tookMs });
     } catch (err) {
       return fail(`token_match failed: ${(err as Error).message}`);
     }
@@ -471,8 +484,8 @@ server.registerTool(
       const handle = db.openTable(table);
       const col = column ?? inferTextColumn(handle);
       if (!col) return fail(`exact_match: no column found in '${table}' — pass 'column'.`);
-      const rows = handle.exactMatch(col, value, { projection: [col, "_id"] });
-      return ok({ table, column: col, value, matched: rows.length, results: rows.slice(0, limit) });
+      const { value: rows, tookMs } = timed(() => handle.exactMatch(col, value, { projection: [col, "_id"] }));
+      return ok({ table, column: col, value, matched: rows.length, results: rows.slice(0, limit), took_ms: tookMs });
     } catch (err) {
       return fail(`exact_match failed: ${(err as Error).message}`);
     }
@@ -507,8 +520,8 @@ server.registerTool(
       if (!col) {
         return fail(`count: no text column found in '${table}' — pass 'column' explicitly.`);
       }
-      const count = handle.count(col, query, { mode });
-      return ok({ table, column: col, query, count });
+      const { value: count, tookMs } = timed(() => handle.count(col, query, { mode }));
+      return ok({ table, column: col, query, count, took_ms: tookMs });
     } catch (err) {
       return fail(`count failed: ${(err as Error).message}`);
     }
@@ -535,7 +548,8 @@ server.registerTool(
   },
   async ({ query }) => {
     try {
-      return ok({ rows: db.querySql(guardSql(query, writesEnabled)) });
+      const { value: rows, tookMs } = timed(() => db.querySql(guardSql(query, writesEnabled)));
+      return ok({ rows, took_ms: tookMs });
     } catch (err) {
       return fail(`sql failed: ${(err as Error).message}`);
     }
