@@ -122,6 +122,35 @@ function timed<T>(fn: () => T): { value: T; tookMs: number } {
   const value = fn();
   return { value, tookMs: Math.round((performance.now() - t0) * 1000) / 1000 };
 }
+
+const PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+
+// Substitute `{{name}}` placeholders in a SQL string with a query vector: embed
+// each `embeds[name]` text with the server's embedder and inline it as a
+// comma-separated float literal. This is what lets the vector_search /
+// hybrid_search TVFs run from SQL (the engine itself never embeds). The
+// injected values are model-generated floats, so there's no injection surface;
+// a referenced placeholder with no supplied text is a hard error.
+async function applyEmbeds(sql: string, embeds: Record<string, string> | undefined): Promise<string> {
+  const referenced = new Set<string>();
+  for (const m of sql.matchAll(PLACEHOLDER)) referenced.add(m[1]);
+  if (referenced.size === 0) return sql;
+  if (!embeds) {
+    throw new Error(
+      `query has placeholder(s) {{${[...referenced].join("}}, {{")}}} but no 'embed' map was provided`,
+    );
+  }
+  const literals = new Map<string, string>();
+  for (const name of referenced) {
+    const text = embeds[name];
+    if (typeof text !== "string" || text.length === 0) {
+      throw new Error(`no 'embed' text supplied for placeholder {{${name}}}`);
+    }
+    const vec = await embed(text);
+    literals.set(name, `'${Array.from(vec).join(",")}'`);
+  }
+  return sql.replace(PLACEHOLDER, (full, name) => literals.get(name) ?? full);
+}
 const fail = (message: string) => ({
   content: [{ type: "text" as const, text: message }],
   isError: true,
@@ -166,33 +195,17 @@ async function embedRows(
 
 // Search table functions are routed to the dedicated search tools instead of
 // infino_sql. This is now a usability policy, not a technical limit: search
-// TVFs through query_sql work from this async host (they once aborted via the
-// engine's blocking bridge; that's fixed). But hand-assembling a TVF call —
-// especially a vector literal — is error-prone for an agent, so retrieval goes
-// through the typed tools (infino_semantic_search / infino_keyword_search /
-// infino_hybrid_search), which build the call internally.
-const SEARCH_TVFS = ["bm25_search", "vector_search", "hybrid_search", "token_match", "exact_match"];
-
-// Guard for infino_sql. Two layers:
-//   - The search-TVF block is ALWAYS on. It is a usability policy: search TVFs
-//     do work through query_sql now, but the typed retrieval tools are the
-//     intended interface (they handle embedding and projection), so free-form
-//     SQL is kept to filters/joins/aggregates and retrieval goes through them.
-//   - The read-only restriction (single statement, must start with SELECT/WITH)
-//     is policy, gated by the same INFINO_MCP_ENABLE_WRITES switch as
-//     infino_add_documents. Off → read-only only, so the default install can't
-//     write through SQL. On → any single statement (DDL/DML) is allowed, which
-//     makes the binding's querySql fully reachable.
+// Guard for infino_sql. The engine's search TVFs (bm25_search / vector_search /
+// hybrid_search / token_match / exact_match) ARE allowed here — they compose
+// with GROUP BY / joins / aggregates, which is the point of exposing SQL. The
+// vector TVFs need a query vector, which applyEmbeds() supplies from {{name}}
+// placeholders. The one restriction is the read-only policy (single statement,
+// must start with SELECT/WITH), gated by the same INFINO_MCP_ENABLE_WRITES
+// switch as infino_add_documents: off → read-only, so the default install can't
+// write through SQL; on → any single statement (DDL/DML) is allowed.
 function guardSql(sql: string, allowWrites: boolean): string {
   const stripped = sql.trim().replace(/;\s*$/, "");
   if (stripped.includes(";")) throw new Error("only a single statement is allowed");
-  const tvf = SEARCH_TVFS.find((fn) => new RegExp(`\\b${fn}\\s*\\(`, "i").test(stripped));
-  if (tvf) {
-    throw new Error(
-      `${tvf}() isn't available through infino_sql — use the dedicated retrieval tools (infino_keyword_search, ` +
-        `infino_semantic_search, infino_hybrid_search) instead. infino_sql is for filters, joins, and aggregates over your tables.`,
-    );
-  }
   if (!allowWrites && !/^(select|with)\b/i.test(stripped)) {
     throw new Error(
       "only read-only SELECT / WITH queries are allowed (set INFINO_MCP_ENABLE_WRITES to permit DDL/DML through SQL)",
@@ -533,22 +546,37 @@ server.registerTool(
   {
     title: "SQL over Infino",
     description:
-      "Use for structural or analytical questions — counts, GROUP BY, joins, aggregates, filtering by exact column " +
-      "value — returning result rows. Row filters use literal/substring matching (e.g. LIKE), not ranked relevance, so " +
-      "for ranked or meaning-based text search use infino_keyword_search / infino_semantic_search / infino_hybrid_search " +
-      "instead (the engine's search table functions are not callable here). " +
+      "Use for structural or analytical questions — counts, GROUP BY, joins, aggregates, filtering by column value — " +
+      "returning result rows. The engine's search functions are callable as table-valued relations, so a single query " +
+      "can rank AND aggregate: bm25_search('table','text_col','terms', k) — also bm25_search_prefix / token_match / " +
+      "exact_match — need no embedding. vector_search('table','vec_col', {{q}}, k) and " +
+      "hybrid_search('table','text_col','terms','vec_col', {{q}}, k) need a query vector: put a {{name}} placeholder " +
+      "where the vector goes and pass embed:{\"name\":\"query text\"} — the server embeds the text and substitutes the " +
+      "vector in. Example: SELECT path, SUM(end_line - start_line + 1) AS lines FROM " +
+      "bm25_search('docs','body','error timeout', 300) GROUP BY path ORDER BY lines DESC. " +
       (writesEnabled
         ? "Any single statement is allowed (including DDL/DML), since INFINO_MCP_ENABLE_WRITES is set."
         : "Read-only: a single SELECT / WITH statement; DDL/DML is rejected."),
     inputSchema: {
       query: writesEnabled
-        ? z.string().describe("A single SQL statement.")
-        : z.string().describe("A single read-only SELECT or WITH statement."),
+        ? z.string().describe("A single SQL statement. May use search TVFs and {{name}} vector placeholders.")
+        : z
+            .string()
+            .describe("A single read-only SELECT or WITH statement. May use search TVFs and {{name}} vector placeholders."),
+      embed: z
+        .record(z.string())
+        .optional()
+        .describe(
+          "Map of placeholder name -> query text. Each text is embedded with the server's embedder and its vector " +
+            "is substituted for every {{name}} in the query — required to use vector_search / hybrid_search. " +
+            'E.g. {"q":"error timeout"} fills {{q}}.',
+        ),
     },
   },
-  async ({ query }) => {
+  async ({ query, embed: embeds }) => {
     try {
-      const { value: rows, tookMs } = timed(() => db.querySql(guardSql(query, writesEnabled)));
+      const sql = await applyEmbeds(query, embeds as Record<string, string> | undefined);
+      const { value: rows, tookMs } = timed(() => db.querySql(guardSql(sql, writesEnabled)));
       return ok({ rows, took_ms: tookMs });
     } catch (err) {
       return fail(`sql failed: ${(err as Error).message}`);
