@@ -5,10 +5,11 @@ description: How to retrieve from Infino — choosing keyword vs semantic vs hyb
 
 # Using Infino for retrieval
 
-Infino is an embedded retrieval engine over data on object storage: it runs
-full-text (BM25), vector, hybrid, and SQL search over one copy of the data,
-in-process, with no separate server. These tools (from the Infino MCP server)
-operate on a connected catalog of tables.
+Infino is a retrieval engine over data on object storage: it runs full-text
+(BM25), vector, hybrid, and SQL search over one copy of the data — embedded
+in-process against a local path or bucket, or against a hosted Infino Cloud
+endpoint. These tools (from the Infino MCP server) operate on a connected
+catalog of tables; how the server connects is transparent to the tools below.
 
 ## 1. Discover before you search
 

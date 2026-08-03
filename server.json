@@ -18,7 +18,13 @@
       "environmentVariables": [
         {
           "name": "INFINO_MCP_URI",
-          "description": "Data to serve: a local path or an s3://|az:// bucket URI. Optional — defaults to a durable per-user directory (~/.infino/mcp) so data persists across restarts, falling back to an ephemeral memory:// catalog only if that directory can't be created.",
+          "description": "Data to serve: a local path, an s3://|az:// bucket URI, or a hosted https://<host>/<database> endpoint (Infino Cloud). Optional — defaults to a durable per-user directory (~/.infino/mcp) so data persists across restarts, falling back to an ephemeral memory:// catalog only if that directory can't be created.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "INFINO_API_KEY",
+          "description": "API key for a hosted (https://) Infino Cloud endpoint. Required when INFINO_MCP_URI is an https:// URI; ignored for local and object-storage connections.",
           "isRequired": false,
           "format": "string"
         },

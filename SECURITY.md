@@ -11,16 +11,19 @@ a few business days and will keep you updated on the fix.
 
 ## Data handling
 
-This MCP server is designed to run **locally**, beside the client, and to keep
-data and credentials on the user's machine:
+This MCP server runs **locally**, beside the client, and keeps data and
+credentials on the user's machine:
 
-- It runs as a local subprocess over stdio — there is **no network listener and
-  no remote service**.
+- It runs as a local subprocess over stdio and opens **no inbound network
+  listener**. In the default local/bucket mode it contacts no remote service;
+  when pointed at a hosted `https://` Infino Cloud endpoint it makes
+  **outbound** TLS calls to that endpoint to serve searches and writes, so those
+  request payloads reach the hosted service you configured.
 - Query and document embedding use a **local model**; text is never sent to a
-  third-party embedding API, and there is no API key to provision.
-- Storage credentials are read from standard provider environment variables and
-  used only to reach the bucket you configure; they are **never logged or
-  returned in tool output**.
+  third-party embedding API, and there is no embedding API key to provision.
+- Storage credentials and the hosted API key (`INFINO_API_KEY`) are read from
+  environment variables and used only to reach the store or endpoint you
+  configure; they are **never logged or returned in tool output**.
 - The server is **read-only by default** — document writes (add/update/delete)
   and DDL/DML SQL are exposed only when `INFINO_MCP_ENABLE_WRITES` is set.
 

@@ -1,10 +1,11 @@
 # Smithery configuration for the Infino MCP server.
 #
-# Infino is a LOCAL (stdio) server: it runs on the user's machine via `npx` and
-# connects to their own data on object storage — there is no hosted HTTP URL, so
-# this is published via Smithery's GitHub-connected flow (this file), NOT the
-# "MCP Server URL" form. Smithery lists it for discovery and launches it with
-# the command below, prompting the user for the config schema.
+# Infino runs as a LOCAL (stdio) server: it is launched on the user's machine
+# via `npx` and connects to their data — a local path, an object-storage bucket,
+# or a hosted Infino Cloud endpoint. The server process itself exposes no hosted
+# HTTP URL, so this is published via Smithery's GitHub-connected flow (this
+# file), NOT the "MCP Server URL" form. Smithery lists it for discovery and
+# launches it with the command below, prompting the user for the config schema.
 startCommand:
   type: stdio
   configSchema:
@@ -15,7 +16,11 @@ startCommand:
       infinoMcpUri:
         type: string
         title: Infino data URI
-        description: "Data to serve: a local path (e.g. /Users/me/.infino/memory) or an s3://|gs://|az:// bucket URI."
+        description: "Data to serve: a local path (e.g. /Users/me/.infino/memory), an s3://|gs://|az:// bucket URI, or a hosted https://<host>/<database> endpoint (Infino Cloud)."
+      apiKey:
+        type: string
+        title: Infino Cloud API key (hosted only)
+        description: "API key for a hosted https:// endpoint. Leave blank for a local path or bucket URI."
       enableWrites:
         type: boolean
         default: false
@@ -45,6 +50,7 @@ startCommand:
       args: ['-y', '@infino-ai/mcp-server'],
       env: {
         INFINO_MCP_URI: config.infinoMcpUri,
+        ...(config.apiKey ? { INFINO_API_KEY: config.apiKey } : {}),
         ...(config.enableWrites ? { INFINO_MCP_ENABLE_WRITES: 'true' } : {}),
         ...(config.embedProvider ? { INFINO_MCP_EMBED_PROVIDER: config.embedProvider } : {}),
         ...(config.embedBaseUrl ? { INFINO_MCP_EMBED_BASE_URL: config.embedBaseUrl } : {}),
