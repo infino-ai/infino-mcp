@@ -20,10 +20,13 @@ import { embed, embedderInfo } from "./embedding.js";
 // --- connection (env-configured, opened once at startup) -------------------
 //
 // The agent never manages connections: the server is pointed at the data via
-// INFINO_MCP_URI (a local path, or the user's own s3://|az:// bucket).
-// Credentials come from the standard AWS_*/AZURE_* environment variables. AWS
-// S3 uses the default endpoint; for any S3-compatible store (Cloudflare R2,
-// MinIO, Backblaze B2, …) set AWS_ENDPOINT_URL alongside the AWS_* keys.
+// INFINO_MCP_URI, which selects the backend by its scheme:
+//   - a local path or an s3://|az:// bucket  → an embedded catalog opened
+//     in-process, with credentials from the standard AWS_*/AZURE_* variables
+//     (AWS S3 uses the default endpoint; for an S3-compatible store — Cloudflare
+//     R2, MinIO, Backblaze B2 — set AWS_ENDPOINT_URL alongside the AWS_* keys);
+//   - an https://<host>/<database> URI       → the hosted Infino Cloud service,
+//     authenticated with an API key (INFINO_API_KEY).
 
 // When INFINO_MCP_URI is unset, default to a durable per-user directory so a
 // fresh install persists across restarts with no configuration. Fall back to
@@ -38,7 +41,8 @@ function defaultUri(): string {
     console.error(
       `INFINO_MCP_URI not set — using ${dir} (persistent; read-only until ` +
         "INFINO_MCP_ENABLE_WRITES is set). Set INFINO_MCP_URI to point at your " +
-        "own path or an s3://|az:// bucket.",
+        "own path, an s3://|az:// bucket, or a hosted https://<host>/<database> " +
+        "endpoint.",
     );
     return dir;
   } catch (err) {
@@ -53,11 +57,19 @@ function defaultUri(): string {
 
 const uri = process.env.INFINO_MCP_URI ?? defaultUri();
 
-// infino reads no credentials from the environment, so gather the standard
-// provider variables here and hand them to connect as storageOptions, keyed
-// by object_store's aws_*/azure_* config strings. Leaving them all unset
-// falls back to ambient cloud identity (an IAM instance role or Azure managed
-// identity).
+// A hosted (Infino Cloud) target is an https:// URI that carries the database
+// in its path (https://<host>/<database>); any other scheme is an embedded
+// catalog on a local path or an object-storage bucket. The two authenticate
+// differently — a hosted connection with an API key, an embedded one with the
+// object store's own AWS_*/AZURE_* variables — so the scheme selects which
+// credential we hand to connect below.
+const isHosted = /^https?:\/\//i.test(uri);
+
+// For an embedded catalog, infino reads no credentials from the environment, so
+// gather the standard provider variables here and hand them to connect as
+// storageOptions, keyed by object_store's aws_*/azure_* config strings. Leaving
+// them all unset falls back to ambient cloud identity (an IAM instance role or
+// Azure managed identity). These are ignored for a hosted connection.
 const storageOptions: Record<string, string> = {};
 const addStorageOption = (key: string, value: string | undefined) => {
   if (value) storageOptions[key] = value;
@@ -82,6 +94,11 @@ if (s3Endpoint) {
 addStorageOption("azure_storage_account_name", process.env.AZURE_STORAGE_ACCOUNT);
 addStorageOption("azure_storage_account_key", process.env.AZURE_STORAGE_KEY);
 
+// API key for a hosted (https://) connection. The binding also reads
+// INFINO_API_KEY on its own, but we pass it explicitly so the credential path
+// is visible here and we can warn on an obvious misconfiguration.
+const apiKey = process.env.INFINO_API_KEY;
+
 // Opt into a connect-time probe so bad credentials or an unreachable bucket
 // fail at startup instead of on the first search.
 const validate = ["1", "true", "yes"].includes(
@@ -89,7 +106,26 @@ const validate = ["1", "true", "yes"].includes(
 );
 
 const connectOptions: ConnectOptions = {};
-if (Object.keys(storageOptions).length > 0) connectOptions.storageOptions = storageOptions;
+if (isHosted) {
+  // Hosted (Infino Cloud): authenticate with the API key; the platform owns the
+  // storage, so the object-store credentials don't apply.
+  if (apiKey) {
+    connectOptions.apiKey = apiKey;
+  } else {
+    console.error(
+      "INFINO_MCP_URI is a hosted https:// endpoint but INFINO_API_KEY is not " +
+        "set — requests will likely be rejected with an authentication error.",
+    );
+  }
+} else {
+  if (Object.keys(storageOptions).length > 0) connectOptions.storageOptions = storageOptions;
+  if (apiKey) {
+    console.error(
+      "INFINO_API_KEY is set but INFINO_MCP_URI is not a hosted https:// " +
+        "endpoint — the key is ignored for local and object-storage connections.",
+    );
+  }
+}
 if (validate) connectOptions.validate = true;
 
 let db: ReturnType<typeof connect>;
@@ -679,5 +715,6 @@ if (writesEnabled) {
 const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error(
-  `infino MCP server ready on stdio (uri: ${uri}, writes: ${writesEnabled ? "on" : "off"}, embedder: ${embedderInfo()})`,
+  `infino MCP server ready on stdio (uri: ${uri}, mode: ${isHosted ? "hosted" : "embedded"}, ` +
+    `writes: ${writesEnabled ? "on" : "off"}, embedder: ${embedderInfo()})`,
 );

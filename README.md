@@ -6,9 +6,9 @@
 
 An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com/infino-ai/infino) — it lets an AI agent run **keyword**, **semantic**, **hybrid**, and **SQL** retrieval over your data on object storage, from any MCP-compatible client (Claude Code, Claude Desktop, Cursor, VS Code, and others). Published on npm as [`@infino-ai/mcp-server`](https://www.npmjs.com/package/@infino-ai/mcp-server) and listed on the [official MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.infino-ai/mcp-server` (which propagates to catalogs like Smithery, Glama, and PulseMCP).
 
-- **No API key.** Semantic search embeds queries with a local model — nothing leaves the machine for embedding.
+- **Local embeddings, no key.** Semantic search embeds queries with a local model — nothing leaves the machine for embedding.
 - **Read-only by default.** Writes and full SQL are opt-in behind a single environment flag.
-- **Bring your own storage.** Point it at a local path or your own bucket (S3, Azure, or any S3-compatible store).
+- **Local or hosted.** Point it at a local path, your own bucket (S3, Azure, or any S3-compatible store), or a hosted Infino Cloud endpoint with an API key.
 
 ---
 
@@ -39,7 +39,7 @@ An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com
 
 - **Node.js ≥ 18** (the server runs as a Node process over stdio).
 - **An MCP-compatible client** (Claude Code, Claude Desktop, Cursor, VS Code, …).
-- **Data reachable by Infino** — a local directory, or a bucket with credentials available in the environment (see [Storage backends](#storage-backends)).
+- **Data reachable by Infino** — a local directory, a bucket with credentials available in the environment, or a hosted Infino Cloud endpoint with an API key (see [Storage backends](#storage-backends)).
 - On first run the server downloads the local embedding model (~90 MB) once and caches it; subsequent runs are offline for embedding.
 
 ---
@@ -54,6 +54,21 @@ The server is launched by your MCP client over stdio — you don't run it direct
   "args": ["-y", "@infino-ai/mcp-server"],
   "env": {
     "INFINO_MCP_URI": "/Users/me/.infino/memory"
+  }
+}
+```
+
+To serve a **hosted Infino Cloud** database instead, point `INFINO_MCP_URI` at
+the `https://<host>/<database>` endpoint and supply your API key — everything
+else (the tools, the read-only default) is identical:
+
+```jsonc
+{
+  "command": "npx",
+  "args": ["-y", "@infino-ai/mcp-server"],
+  "env": {
+    "INFINO_MCP_URI": "https://api.platform.infino.ai/my-database",
+    "INFINO_API_KEY": "inf_…"
   }
 }
 ```
@@ -178,7 +193,8 @@ All configuration is via environment variables — there are no config files and
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `INFINO_MCP_URI` | No | `~/.infino/mcp` (persistent) | Data to serve: a local path (`/Users/me/.infino/memory`) or a bucket URI (`s3://…`, `az://…`). If unset, a durable per-user directory (`~/.infino/mcp`) is used so data persists across restarts; it falls back to an ephemeral in-process catalog (`memory://`) only if that directory can't be created. |
+| `INFINO_MCP_URI` | No | `~/.infino/mcp` (persistent) | Data to serve: a local path (`/Users/me/.infino/memory`), a bucket URI (`s3://…`, `az://…`), or a hosted endpoint (`https://<host>/<database>`, Infino Cloud). If unset, a durable per-user directory (`~/.infino/mcp`) is used so data persists across restarts; it falls back to an ephemeral in-process catalog (`memory://`) only if that directory can't be created. |
+| `INFINO_API_KEY` | With a hosted URI | — | API key (`inf_…`) for a hosted `https://` endpoint. Required when `INFINO_MCP_URI` is an `https://` URI; ignored for local and object-storage connections. |
 | `INFINO_MCP_ENABLE_WRITES` | No | _off_ | When set (`1`/`true`/`yes`), exposes `infino_add_documents` **and** lets `infino_sql` run DDL/DML. Omit for a strictly read-only server. |
 | `INFINO_MCP_EMBED_PROVIDER` | No | `local` | Embedding provider: `local` (Hugging Face transformers.js, no key, nothing leaves the machine) or `openai` (any OpenAI-compatible `/embeddings` endpoint — OpenAI, Azure OpenAI's `/openai/v1` surface, or a compatible server). Inferred as `openai` when `INFINO_MCP_EMBED_BASE_URL` is set. |
 | `INFINO_MCP_EMBED_BASE_URL` | With `openai` | — | Base URL of the OpenAI-compatible embeddings API, e.g. `https://api.openai.com/v1` or `https://<resource>.openai.azure.com/openai/v1`. The server POSTs to `<base>/embeddings`. |
@@ -207,6 +223,7 @@ The model must match what produced the stored vectors — a mismatch yields mean
 | AWS S3 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (+ `AWS_SESSION_TOKEN`, `AWS_REGION` if used) |
 | S3-compatible (R2/MinIO/B2) | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` **and** `AWS_ENDPOINT_URL` |
 | Azure Blob | `AZURE_STORAGE_ACCOUNT`, `AZURE_STORAGE_KEY` |
+| Infino Cloud (hosted) | `INFINO_API_KEY` — no object-storage credentials needed (the platform owns the storage) |
 
 ### Storage backends
 
@@ -235,7 +252,22 @@ The model must match what produced the stored vectors — a mismatch yields mean
   "AZURE_STORAGE_ACCOUNT": "…",
   "AZURE_STORAGE_KEY": "…"
 }
+
+// Infino Cloud (hosted) — the database is the last path segment
+"env": {
+  "INFINO_MCP_URI": "https://api.platform.infino.ai/my-database",
+  "INFINO_API_KEY": "inf_…"
+}
 ```
+
+On a hosted connection the search, SQL, and (when enabled) write tools all
+behave exactly as they do locally — the only difference is where the data
+lives. Compaction and garbage collection are handled server-side, so they are
+not exposed as client operations. Note that semantic and hybrid search still
+embed queries **locally** in this server, so `INFINO_MCP_EMBED_MODEL` must match
+the model that produced the hosted table's stored vectors (see the OpenAI /
+Azure OpenAI note above) — this matters especially when someone else ingested
+the data.
 
 ---
 
@@ -262,11 +294,11 @@ The engine's search table functions (`bm25_search`, `vector_search`, `hybrid_sea
 
 ## Security & data handling
 
-This server is designed to run locally, beside the client, and to keep data and credentials on the user's machine.
+This server runs locally, beside the client, and keeps data and credentials on the user's machine.
 
-- **Local execution.** It runs as a subprocess of your MCP client over stdio. There is no network listener and no remote service.
-- **No data sent for embedding.** Query and document embedding uses a local model — text is never sent to a third-party embedding API. There is no API key to provision or leak.
-- **Credentials stay in the environment.** Storage credentials are read from standard provider environment variables and used only to reach the bucket you configured. They are never logged or returned in tool output.
+- **Local execution, no inbound listener.** It runs as a subprocess of your MCP client over stdio and opens no network listener. In the default local/bucket mode it contacts no remote service. When `INFINO_MCP_URI` is a hosted `https://` endpoint, it makes **outbound** TLS calls to that endpoint to serve searches, SQL, and (if enabled) writes — so the data in those requests reaches the hosted service you configured, and nothing else.
+- **No data sent for embedding.** Query and document embedding uses a local model — text is never sent to a third-party embedding API. There is no embedding API key to provision or leak. (This holds in both local and hosted mode: only the resulting query vector, not the raw text of the embed input, is sent to a hosted endpoint.)
+- **Credentials stay in the environment.** Storage credentials (`AWS_*`/`AZURE_*`) and the hosted API key (`INFINO_API_KEY`) are read from environment variables and used only to reach the store or endpoint you configured. They are never logged or returned in tool output.
 - **Read-only by default.** Without `INFINO_MCP_ENABLE_WRITES`, the write tool is not even advertised to the agent, and `infino_sql` rejects anything but a single `SELECT`/`WITH`. Enable writes deliberately, and prefer scoping the server to data the agent is allowed to modify.
 - **Least privilege.** Point `INFINO_MCP_URI` at the narrowest dataset the task needs, and supply storage credentials scoped to that bucket/prefix.
 
@@ -288,6 +320,7 @@ If you change `INFINO_MCP_EMBED_MODEL`, the table's vector index must match the 
 | `INFINO_MCP_URI is required` | The env var isn't reaching the subprocess. In GUI clients, env must be inside the server's `env` block (the process won't inherit your shell). |
 | `add_documents` not available | `INFINO_MCP_ENABLE_WRITES` isn't set, or the client wasn't restarted after setting it. |
 | Slow first query | One-time embedding-model download (~90 MB). Subsequent runs use the cache. |
+| Auth error against a hosted `https://` URI | `INFINO_API_KEY` is missing, wrong, or lacks access to that database. Confirm the key (`inf_…`) and that the URI's last path segment is a database you can reach. |
 | Dimension / vector errors on semantic search | The table's vector index doesn't match the embedding model's dimension. Re-ingest, or set `INFINO_MCP_EMBED_MODEL` to the model the index was built with. |
 | `… in SQL isn't supported from the server yet` | You called a search table function inside `infino_sql`. Use `infino_semantic_search` / `infino_keyword_search` instead. |
 

@@ -26,8 +26,14 @@
     "infino_uri": {
       "type": "string",
       "title": "Infino data URI",
-      "description": "Data to serve: a local path (e.g. /Users/me/.infino/memory) or an s3://|gs://|az:// bucket URI.",
+      "description": "Data to serve: a local path (e.g. /Users/me/.infino/memory), an s3://|gs://|az:// bucket URI, or a hosted https://<host>/<database> endpoint (Infino Cloud).",
       "required": true
+    },
+    "infino_api_key": {
+      "type": "string",
+      "title": "Infino Cloud API key",
+      "description": "API key for a hosted https:// endpoint. Leave blank for a local path or bucket URI.",
+      "required": false
     },
     "enable_writes": {
       "type": "boolean",
