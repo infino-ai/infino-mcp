@@ -6,19 +6,19 @@
     "url": "https://github.com/infino-ai/infino-mcp",
     "source": "github"
   },
-  "version": "0.7.0",
+  "version": "0.7.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@infino-ai/mcp-server",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
           "name": "INFINO_MCP_URI",
-          "description": "Data to serve: a local path, an s3://|az:// bucket URI, or a hosted https://<host>/<database> endpoint (Infino Cloud). Optional — defaults to a durable per-user directory (~/.infino/mcp) so data persists across restarts, falling back to an ephemeral memory:// catalog only if that directory can't be created.",
+          "description": "Data to serve: a local path, an s3://|az:// bucket URI, or a hosted https://<host>/<database> endpoint (Infino Cloud). Optional \u2014 defaults to a durable per-user directory (~/.infino/mcp) so data persists across restarts, falling back to an ephemeral memory:// catalog only if that directory can't be created.",
           "isRequired": false,
           "format": "string"
         },
