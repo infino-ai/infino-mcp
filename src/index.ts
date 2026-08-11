@@ -48,7 +48,7 @@ function defaultUri(): string {
   } catch (err) {
     console.error(
       `INFINO_MCP_URI not set and ${dir} is not writable ` +
-        `(${(err as Error).message}) — serving an ephemeral in-process ` +
+        `(${errText(err)}) — serving an ephemeral in-process ` +
         "catalog (memory://).",
     );
     return "memory://";
@@ -132,7 +132,7 @@ let db: ReturnType<typeof connect>;
 try {
   db = connect(uri, connectOptions);
 } catch (err) {
-  console.error(`Failed to connect to ${uri}: ${(err as Error).message}`);
+  console.error(`Failed to connect to ${uri}: ${errText(err)}`);
   process.exit(1);
 }
 
@@ -191,6 +191,40 @@ const fail = (message: string) => ({
   content: [{ type: "text" as const, text: message }],
   isError: true,
 });
+
+// Translate raw engine/transport errors into messages an agent (or human)
+// can act on. Two sources of signal: the HTTP status a hosted (Infino Cloud)
+// connection attaches to thrown errors, and the engine's index-metadata
+// errors, which surface when a search needs an index the table wasn't
+// created with.
+function errText(err: unknown): string {
+  const e = err as Error & { status?: number };
+  const message = e?.message ?? String(err);
+  if (/KV metadata key "inf\.fts\./.test(message)) {
+    return (
+      "this table has no full-text index, so keyword/BM25/hybrid search is " +
+      "unavailable on it — query it with infino_sql instead, or recreate the " +
+      "table with an FTS index on the text column"
+    );
+  }
+  if (/KV metadata key "inf\.vec\./.test(message)) {
+    return (
+      "this table has no vector index, so semantic/hybrid search is " +
+      "unavailable on it — query it with infino_sql instead, or recreate the " +
+      "table with a vector index"
+    );
+  }
+  if (e?.status === 503) {
+    return "the database is starting up (transient 503) — retry in a few seconds";
+  }
+  if (e?.status === 404) {
+    return `not found (404): ${message}`;
+  }
+  if (e?.status === 409) {
+    return `already exists (409): ${message}`;
+  }
+  return message;
+}
 
 // When the caller doesn't name a column, search the first UTF-8 text column in
 // the table's schema. (A table can have several; an explicit `column` overrides.)
@@ -287,7 +321,7 @@ server.registerTool(
     try {
       return ok({ tables: db.listTables() });
     } catch (err) {
-      return fail(`list_tables failed: ${(err as Error).message}`);
+      return fail(`list_tables failed: ${errText(err)}`);
     }
   },
 );
@@ -311,7 +345,7 @@ server.registerTool(
         .fields.map((f: { name: string; type: unknown }) => ({ name: f.name, type: String(f.type) }));
       return ok({ table, columns });
     } catch (err) {
-      return fail(`describe_table failed: ${(err as Error).message}`);
+      return fail(`describe_table failed: ${errText(err)}`);
     }
   },
 );
@@ -378,7 +412,7 @@ server.registerTool(
       const { value: results, tookMs } = timed(() => handle.vectorSearch(vecCol, vector, k, { projection, filter }));
       return ok({ table, query, results, took_ms: tookMs });
     } catch (err) {
-      return fail(`semantic_search failed: ${(err as Error).message}`);
+      return fail(`semantic_search failed: ${errText(err)}`);
     }
   },
 );
@@ -421,7 +455,7 @@ server.registerTool(
       );
       return ok({ table, column: col, query, results, took_ms: tookMs });
     } catch (err) {
-      return fail(`keyword_search failed: ${(err as Error).message}`);
+      return fail(`keyword_search failed: ${errText(err)}`);
     }
   },
 );
@@ -464,7 +498,7 @@ server.registerTool(
       );
       return ok({ table, query, results, took_ms: tookMs });
     } catch (err) {
-      return fail(`hybrid_search failed: ${(err as Error).message}`);
+      return fail(`hybrid_search failed: ${errText(err)}`);
     }
   },
 );
@@ -502,7 +536,7 @@ server.registerTool(
       const { value: rows, tookMs } = timed(() => handle.tokenMatch(col, query, { mode, projection: [col, "_id"] }));
       return ok({ table, column: col, query, matched: rows.length, results: rows.slice(0, limit), took_ms: tookMs });
     } catch (err) {
-      return fail(`token_match failed: ${(err as Error).message}`);
+      return fail(`token_match failed: ${errText(err)}`);
     }
   },
 );
@@ -536,7 +570,7 @@ server.registerTool(
       const { value: rows, tookMs } = timed(() => handle.exactMatch(col, value, { projection: [col, "_id"] }));
       return ok({ table, column: col, value, matched: rows.length, results: rows.slice(0, limit), took_ms: tookMs });
     } catch (err) {
-      return fail(`exact_match failed: ${(err as Error).message}`);
+      return fail(`exact_match failed: ${errText(err)}`);
     }
   },
 );
@@ -572,7 +606,7 @@ server.registerTool(
       const { value: count, tookMs } = timed(() => handle.count(col, query, { mode }));
       return ok({ table, column: col, query, count, took_ms: tookMs });
     } catch (err) {
-      return fail(`count failed: ${(err as Error).message}`);
+      return fail(`count failed: ${errText(err)}`);
     }
   },
 );
@@ -615,7 +649,7 @@ server.registerTool(
       const { value: rows, tookMs } = timed(() => db.querySql(guardSql(sql, writesEnabled)));
       return ok({ rows, took_ms: tookMs });
     } catch (err) {
-      return fail(`sql failed: ${(err as Error).message}`);
+      return fail(`sql failed: ${errText(err)}`);
     }
   },
 );
@@ -646,7 +680,7 @@ if (writesEnabled) {
         handle.append(rows);
         return ok({ table, appended: rows.length });
       } catch (err) {
-        return fail(`add_documents failed: ${(err as Error).message}`);
+        return fail(`add_documents failed: ${errText(err)}`);
       }
     },
   );
@@ -678,7 +712,7 @@ if (writesEnabled) {
         const stats = handle.update(predicate, rows);
         return ok({ table, predicate, ...stats });
       } catch (err) {
-        return fail(`update_documents failed: ${(err as Error).message}`);
+        return fail(`update_documents failed: ${errText(err)}`);
       }
     },
   );
@@ -702,7 +736,7 @@ if (writesEnabled) {
         const stats = db.openTable(table).delete(predicate);
         return ok({ table, predicate, ...stats });
       } catch (err) {
-        return fail(`delete_documents failed: ${(err as Error).message}`);
+        return fail(`delete_documents failed: ${errText(err)}`);
       }
     },
   );
