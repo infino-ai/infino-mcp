@@ -1,0 +1,25 @@
+name: CI
+
+# Build gate for pull requests and main. Publishing stays in publish.yml
+# (manual); this just proves the package compiles and packs cleanly.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build & pack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Same validation the publish workflow's dry run relies on: the tarball
+      # assembles with the expected contents.
+      - run: npm pack --dry-run
