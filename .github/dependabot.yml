@@ -1,0 +1,16 @@
+# Keep dependencies current, most importantly the @infino-ai/infino engine
+# binding — a new engine release should show up here as a PR, not as drift.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+    # One PR per dependency; the engine binding is the one that matters most,
+    # so don't let it queue behind grouped updates.
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

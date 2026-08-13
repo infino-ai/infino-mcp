@@ -20,6 +20,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # Behavioral gate: the binding-contract and server-boot tests exercise
+      # the engine surface this server uses, so a dependabot bump of
+      # @infino-ai/infino fails here if a release changes behavior, not just
+      # types.
+      - run: npm test
       # Same validation the publish workflow's dry run relies on: the tarball
       # assembles with the expected contents.
       - run: npm pack --dry-run
