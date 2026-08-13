@@ -53,7 +53,7 @@
     "@huggingface/transformers": "^4.2.0",
     "@infino-ai/infino": "^0.5.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "zod": "^3.23.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20",
