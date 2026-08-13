@@ -95,11 +95,14 @@ test("vectorSearch filter pre-restricts the kNN candidates", () => {
 });
 
 test("hybridSearch fuses keyword and vector rankings", () => {
-  const hits = table.hybridSearch("content", "alpha", "embedding", unit(2), 3, {
+  // "zulu" appears in exactly one document, and unit(2) is exactly that
+  // document's vector — both halves rank it first, so the fused top hit is
+  // deterministic. (A query matching several near-equal documents can tie in
+  // the fusion, and tie-break order is not part of the contract.)
+  const hits = table.hybridSearch("content", "zulu", "embedding", unit(2), 3, {
     projection: ["content", "_id", "score"],
   });
   assert.ok(hits.length >= 1);
-  // "alpha zulu" matches the keyword AND is nearest the query vector.
   assert.equal(hits[0].content, "alpha zulu");
   assert.equal(typeof hits[0].score, "number");
 });
