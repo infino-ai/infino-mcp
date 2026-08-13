@@ -21,10 +21,11 @@ name: Release prep
 # with bump=major when a breaking release is intended. The classification
 # lands in the PR body so the human check has something to check.
 #
-# Auth is the sbg-ci GitHub App (installed on this repo): GITHUB_TOKEN can't
-# be used here twice over — PRs it opens don't trigger CI, and releases the
-# next workflow creates with it wouldn't trigger publish.yml. Needs the
-# SBG_CI_PRIVATE_KEY secret.
+# Auth is the org's release GitHub App (installed on this repo, scoped to
+# Contents + Pull requests): GITHUB_TOKEN can't be used here twice over — PRs
+# it opens don't trigger CI, and releases the next workflow creates with it
+# wouldn't trigger publish.yml. Needs the RELEASE_APP_ID variable and the
+# RELEASE_APP_PRIVATE_KEY secret.
 
 on:
   # Daily: 10:15 IST (04:45 UTC). Skips itself when there is nothing to
@@ -41,7 +42,7 @@ on:
         options: [auto, patch, minor, major]
 
 permissions:
-  contents: read # pushes/PRs use the sbg-ci App token, not the workflow token
+  contents: read # pushes/PRs use the release-App token, not the workflow token
 
 # One release prep at a time; queue instead of cancelling.
 concurrency:
@@ -55,12 +56,12 @@ jobs:
     if: github.repository == 'infino-ai/infino-mcp'
     timeout-minutes: 10
     steps:
-      - name: Mint sbg-ci token scoped to infino-mcp
+      - name: Mint release-App token scoped to infino-mcp
         id: token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: "4121986"
-          private-key: ${{ secrets.SBG_CI_PRIVATE_KEY }}
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           owner: infino-ai
           repositories: infino-mcp
 

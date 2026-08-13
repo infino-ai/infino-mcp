@@ -5,7 +5,7 @@ name: Release on merge
 # the GitHub release. publish.yml listens for that release and ships the
 # version to npm and the MCP Registry.
 #
-# The tag and release are created with the sbg-ci App token: a release
+# The tag and release are created with the org's release-App token: a release
 # created with the default GITHUB_TOKEN would not trigger publish.yml
 # (workflows can't trigger workflows with the default token).
 
@@ -15,7 +15,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read # the tag + release use the sbg-ci App token
+  contents: read # the tag + release use the release-App token
 
 jobs:
   release:
@@ -27,12 +27,12 @@ jobs:
       startsWith(github.event.pull_request.head.ref, 'release-')
     timeout-minutes: 5
     steps:
-      - name: Mint sbg-ci token scoped to infino-mcp
+      - name: Mint release-App token scoped to infino-mcp
         id: token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: "4121986"
-          private-key: ${{ secrets.SBG_CI_PRIVATE_KEY }}
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           owner: infino-ai
           repositories: infino-mcp
 
