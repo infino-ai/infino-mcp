@@ -1,16 +1,32 @@
 # Keep dependencies current, most importantly the @infino-ai/infino engine
-# binding — a new engine release should show up here as a PR, not as drift.
+# binding — a new engine release should show up here as a PR that has to pass
+# CI, not as silent drift.
+#
+# Dependabot has no priority setting, and a full queue means it simply opens no
+# more PRs — so the dependency that matters most here can be the one left out
+# (it has happened: a full queue of routine updates starved an engine release).
+# The fix is to keep the queue from filling: every dependency except the engine
+# binding rides in one grouped PR, occupying a single slot however many are
+# pending, while @infino-ai/infino matches no group and so always gets its own.
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: daily
-    # One PR per dependency; the engine binding is the one that matters most,
-    # so don't let it queue behind grouped updates.
     open-pull-requests-limit: 5
+    groups:
+      dependencies:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@infino-ai/infino"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"

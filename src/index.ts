@@ -634,7 +634,7 @@ server.registerTool(
             .string()
             .describe("A single read-only SELECT or WITH statement. May use search TVFs and {{name}} vector placeholders."),
       embed: z
-        .record(z.string())
+        .record(z.string(), z.string())
         .optional()
         .describe(
           "Map of placeholder name -> query text. Each text is embedded with the server's embedder and its vector " +
@@ -668,7 +668,7 @@ if (writesEnabled) {
       inputSchema: {
         table: z.string().describe("Table to append to."),
         documents: z
-          .array(z.record(z.any()))
+          .array(z.record(z.string(), z.any()))
           .min(1)
           .describe("Rows to append, as JSON objects keyed by column name."),
       },
@@ -700,7 +700,7 @@ if (writesEnabled) {
           .string()
           .describe("SQL predicate selecting the rows to replace, e.g. \"status = 'draft'\"."),
         documents: z
-          .array(z.record(z.any()))
+          .array(z.record(z.string(), z.any()))
           .min(1)
           .describe("Replacement rows, as JSON objects keyed by column name (one per matched row)."),
       },
