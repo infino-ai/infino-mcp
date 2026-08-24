@@ -67,7 +67,7 @@ else (the tools, the read-only default) is identical:
   "command": "npx",
   "args": ["-y", "@infino-ai/mcp-server"],
   "env": {
-    "INFINO_MCP_URI": "https://api.platform.infino.ai/my-database",
+    "INFINO_MCP_URI": "https://api.platform.infino.ws/my-database",
     "INFINO_API_KEY": "inf_…"
   }
 }
@@ -255,7 +255,7 @@ The model must match what produced the stored vectors — a mismatch yields mean
 
 // Infino Cloud (hosted) — the database is the last path segment
 "env": {
-  "INFINO_MCP_URI": "https://api.platform.infino.ai/my-database",
+  "INFINO_MCP_URI": "https://api.platform.infino.ws/my-database",
   "INFINO_API_KEY": "inf_…"
 }
 ```
