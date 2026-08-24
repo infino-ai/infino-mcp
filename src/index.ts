@@ -226,13 +226,19 @@ function errText(err: unknown): string {
   return message;
 }
 
-// When the caller doesn't name a column, search the first UTF-8 text column in
-// the table's schema. (A table can have several; an explicit `column` overrides.)
+// When the caller doesn't name a column, infer the searchable text column.
+// FTS indexes require LargeUtf8, so a LargeUtf8 column is almost certainly
+// the indexed one; plain Utf8 columns are typically ids and short labels.
+// Prefer LargeUtf8, fall back to the first Utf8. (An explicit `column`
+// always overrides.)
 function inferTextColumn(table: { schema(): { fields: Array<{ name: string; type: unknown }> } }):
   | string
   | undefined {
-  const field = table.schema().fields.find((f) => String(f.type).toLowerCase().includes("utf8"));
-  return field?.name;
+  const fields = table.schema().fields;
+  const large = fields.find((f) => String(f.type).toLowerCase().includes("largeutf8"));
+  if (large) return large.name;
+  const any = fields.find((f) => String(f.type).toLowerCase().includes("utf8"));
+  return any?.name;
 }
 
 // The first list-typed column (the vector index lives on a FixedSizeList<float32>).
