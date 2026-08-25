@@ -275,9 +275,9 @@ the data.
 
 | Tool | Arguments | What it does |
 | --- | --- | --- |
-| `infino_semantic_search` | `table`, `query`, `k`, `column?`, `vectorColumn?`, `columns?`, `filter?` | Find passages by **meaning** — embeds the query with a local model (no key) and ranks by vector similarity. Handles paraphrase and synonyms. Optional `filter` (`{column, query, mode?}`) restricts the ranking to rows whose keyword column matches first (a pushdown pre-filter). Optional `columns` chooses which fields each hit returns (e.g. a path + line range to cite); defaults to the text column, with `_id` and `score` always included. |
-| `infino_keyword_search` | `table`, `query`, `k`, `column?`, `columns?` | BM25 full-text search — for exact terms, identifiers, error codes, product names. |
-| `infino_hybrid_search` | `table`, `query`, `k`, `column?`, `vectorColumn?`, `columns?` | **Fused** keyword + semantic search in one ranking pass — BM25 over the text column combined with vector similarity, so rows matching the literal terms *and* the meaning rank highest. |
+| `infino_semantic_search` | `table`, `query`, `k`, `column?`, `vectorColumn?`, `snippetChars?`, `columns?`, `filter?` | Find passages by **meaning** — embeds the query with a local model (no key) and ranks by vector similarity. Handles paraphrase and synonyms. `score` is a **distance** (lower is closer). Optional `filter` (`{column, query, mode?}`) restricts the ranking to rows whose keyword column matches first (a pushdown pre-filter). Optional `columns` chooses which fields each hit returns (e.g. a path + line range to cite); defaults to the text column, with `_id` and `score` always included. |
+| `infino_keyword_search` | `table`, `query`, `k`, `column?`, `snippetChars?`, `columns?` | BM25 full-text search — for exact terms, identifiers, error codes, product names. `score` is a relevance (higher is better). |
+| `infino_hybrid_search` | `table`, `query`, `k`, `column?`, `vectorColumn?`, `snippetChars?`, `columns?` | **Fused** keyword + semantic search in one ranking pass — BM25 over the text column combined with vector similarity, so rows matching the literal terms *and* the meaning rank highest. `score` is the fused rank (higher is better). |
 | `infino_token_match` | `table`, `query`, `column?`, `mode?`, `limit?` | Unranked keyword filter — the set of rows whose text column contains the token(s). Use when you need the matches, not a relevance order. |
 | `infino_exact_match` | `table`, `value`, `column?`, `limit?` | Unranked exact-equality filter over an indexed column (tag, status, id string). |
 | `infino_count` | `table`, `query`, `column?`, `mode?` | Count how many rows match a keyword query, without fetching them — a fast tally over the text column. For the matching rows use `infino_keyword_search` or `infino_token_match`. |
@@ -287,6 +287,8 @@ the data.
 | `infino_add_documents` | `table`, `documents` | Append rows (one call = one commit); embeds the text column for vector tables. **Only when `INFINO_MCP_ENABLE_WRITES` is set.** |
 | `infino_update_documents` | `table`, `predicate`, `documents` | Replace the rows matching a SQL predicate with new documents, 1:1 (missing vectors are embedded). Durable storage only. **Only when `INFINO_MCP_ENABLE_WRITES` is set.** |
 | `infino_delete_documents` | `table`, `predicate` | Delete the rows matching a SQL predicate. Durable storage only. **Only when `INFINO_MCP_ENABLE_WRITES` is set.** |
+
+Search hits return a **snippet** of the text column by default (300 characters, then `…`); other projected columns are never cut. so an agent can scan many hits without pulling whole documents into its context; pass `snippetChars` to widen the cut, or `0` for full values, and read any single hit in full with `infino_sql`. Every search response also carries `score_kind`, stating whether its `score` is a distance (semantic: lower is closer) or a relevance (keyword and hybrid: higher is better).
 
 The engine's search table functions (`bm25_search`, `vector_search`, `hybrid_search`, …) are not callable from `infino_sql` — retrieval goes through the dedicated search tools above, which embed and project for you. `infino_sql` is for filters, joins, and aggregates.
 
