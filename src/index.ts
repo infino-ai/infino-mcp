@@ -376,12 +376,10 @@ function searchProjection(
 // searched text column is touched; ids, paths, other projected columns, and
 // scores pass through as-is.
 const SNIPPET_DEFAULT = 300;
-const SNIPPET_MAX = 4000;
 const snippetParam = z
   .number()
   .int()
   .min(0)
-  .max(SNIPPET_MAX)
   .default(SNIPPET_DEFAULT)
   .describe(
     `Cut the returned text column to this many characters (default ${SNIPPET_DEFAULT}; 0 returns the full text). Keeps large-k results compact; read a hit in full afterwards with infino_sql.`,
