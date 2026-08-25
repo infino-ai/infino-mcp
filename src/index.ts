@@ -369,20 +369,36 @@ function searchProjection(
   return [...new Set([...base, "_id", "score"])];
 }
 
-// Search hits default to a snippet of the text column rather than its full
-// value: an agent reading 50 hits needs enough text to judge relevance, not
-// 50 full documents in its context (it can read any hit in full by id
-// afterwards). `snippetChars` widens or, at 0, disables the cut. Only the
-// searched text column is touched; ids, paths, other projected columns, and
-// scores pass through as-is.
-const SNIPPET_DEFAULT = 300;
+// Search hits carry the full text column by default. A deployment whose rows
+// are whole documents rather than chunks (a 4 KB transcript per row, say) can
+// set INFINO_MCP_SNIPPET_CHARS so hits carry a snippet instead: an agent
+// reading 50 hits needs enough text to judge relevance, not 50 documents in
+// its context, and it can read any hit in full by id afterwards. The operator
+// knows the row shape; the model finds out only after paying for it once. A
+// per-call `snippetChars` overrides the deployment default either way (0 =
+// full text). Only the searched text column is cut; ids, paths, other
+// projected columns, and scores pass through as-is.
+const SNIPPET_DEFAULT = (() => {
+  const raw = process.env.INFINO_MCP_SNIPPET_CHARS;
+  if (!raw) return 0;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    console.error(`INFINO_MCP_SNIPPET_CHARS must be a non-negative integer (got ${raw}); using full text`);
+    return 0;
+  }
+  return n;
+})();
 const snippetParam = z
   .number()
   .int()
   .min(0)
-  .default(SNIPPET_DEFAULT)
+  .optional()
   .describe(
-    `Cut the returned text column to this many characters (default ${SNIPPET_DEFAULT}; 0 returns the full text). Keeps large-k results compact; read a hit in full afterwards with infino_sql.`,
+    "Cut the returned text column to this many characters; 0 returns the full text. " +
+      (SNIPPET_DEFAULT > 0
+        ? `This deployment defaults to ${SNIPPET_DEFAULT}. `
+        : "Defaults to the full text. ") +
+      "Pass a small value when asking for many hits, so results stay compact; read a hit in full afterwards with infino_sql.",
   );
 
 function snippetize<T extends Record<string, unknown>>(
@@ -415,8 +431,8 @@ server.registerTool(
     description:
       "Use when searching for a concept by meaning and the exact wording is unknown — this retrieves paraphrases and " +
       "synonyms, not just literal matches. Embeds the query with a local model (no API key) and ranks a table's " +
-      "embedding column by vector similarity. Each hit carries a score that is a DISTANCE (lower is closer) and, by " +
-      "default, a snippet of the text column. Optional 'filter' restricts the ranking to rows " +
+      "embedding column by vector similarity. Each hit carries a score that is a DISTANCE (lower is closer) and the " +
+      "text column (full, or a snippet — see snippetChars). Optional 'filter' restricts the ranking to rows " +
       "whose keyword column matches a predicate first (a pushdown pre-filter, e.g. semantic search only within rows " +
       "tagged 'billing'). For exact terms use infino_keyword_search; when the query has both literal terms and an " +
       "intent use infino_hybrid_search.",
@@ -461,7 +477,7 @@ server.registerTool(
         table,
         query,
         score_kind: SCORE_KIND.semantic,
-        results: snippetize(results, textCol, snippetChars),
+        results: snippetize(results, textCol, snippetChars ?? SNIPPET_DEFAULT),
         took_ms: tookMs,
       });
     } catch (err) {
@@ -477,8 +493,8 @@ server.registerTool(
     description:
       "Use when the query is literal terms — identifiers, error codes, product names, exact phrases — and you want " +
       "results ranked by relevance. BM25 full-text search over a text column: ranks rows by how well the query's " +
-      "tokens (and their stems) match, each with a relevance score (higher is better) and, by default, a snippet of " +
-      "the text column. Matches exact tokens, not synonyms or paraphrases. " +
+      "tokens (and their stems) match, each with a relevance score (higher is better) and the text column (full, or " +
+      "a snippet — see snippetChars). Matches exact tokens, not synonyms or paraphrases. " +
       "Prefer this over SQL LIKE for known literal terms. For meaning-based search use infino_semantic_search; for " +
       "both at once use infino_hybrid_search.",
     inputSchema: {
@@ -513,7 +529,7 @@ server.registerTool(
         column: col,
         query,
         score_kind: SCORE_KIND.keyword,
-        results: snippetize(results, col, snippetChars),
+        results: snippetize(results, col, snippetChars ?? SNIPPET_DEFAULT),
         took_ms: tookMs,
       });
     } catch (err) {
@@ -530,7 +546,7 @@ server.registerTool(
       "Use when a query carries both specific terms and an intent — you want exact-term precision without giving up " +
       "paraphrase recall. Fuses BM25 over a text column with vector similarity over the embedding column in a single " +
       "ranking pass, so rows matching the literal terms AND the meaning rank highest; the score is the fused rank " +
-      "(higher is better) and each hit carries, by default, a snippet of the text column. Embeds the query with a local " +
+      "(higher is better) and each hit carries the text column (full, or a snippet — see snippetChars). Embeds the query with a local " +
       "model (no API key). Sits between infino_keyword_search (literal only) and infino_semantic_search (meaning only).",
     inputSchema: {
       table: z.string().describe("Table to search."),
@@ -564,7 +580,7 @@ server.registerTool(
         table,
         query,
         score_kind: SCORE_KIND.hybrid,
-        results: snippetize(results, textCol, snippetChars),
+        results: snippetize(results, textCol, snippetChars ?? SNIPPET_DEFAULT),
         took_ms: tookMs,
       });
     } catch (err) {
