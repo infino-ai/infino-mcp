@@ -369,52 +369,6 @@ function searchProjection(
   return [...new Set([...base, "_id", "score"])];
 }
 
-// Search hits carry the full text column by default. A deployment whose rows
-// are whole documents rather than chunks (a 4 KB transcript per row, say) can
-// set INFINO_MCP_SNIPPET_CHARS so hits carry a snippet instead: an agent
-// reading 50 hits needs enough text to judge relevance, not 50 documents in
-// its context, and it can read any hit in full by id afterwards. The operator
-// knows the row shape; the model finds out only after paying for it once. A
-// per-call `snippetChars` overrides the deployment default either way (0 =
-// full text). Only the searched text column is cut; ids, paths, other
-// projected columns, and scores pass through as-is.
-const SNIPPET_DEFAULT = (() => {
-  const raw = process.env.INFINO_MCP_SNIPPET_CHARS;
-  if (!raw) return 0;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0) {
-    console.error(`INFINO_MCP_SNIPPET_CHARS must be a non-negative integer (got ${raw}); using full text`);
-    return 0;
-  }
-  return n;
-})();
-const snippetParam = z
-  .number()
-  .int()
-  .min(0)
-  .optional()
-  .describe(
-    "Cut the returned text column to this many characters; 0 returns the full text. " +
-      (SNIPPET_DEFAULT > 0
-        ? `This deployment defaults to ${SNIPPET_DEFAULT}. `
-        : "Defaults to the full text. ") +
-      "Pass a small value when asking for many hits, so results stay compact; read a hit in full afterwards with infino_sql.",
-  );
-
-function snippetize<T extends Record<string, unknown>>(
-  rows: T[],
-  textCol: string | undefined,
-  limit: number,
-): T[] {
-  if (limit <= 0 || !textCol) return rows;
-  return rows.map((row) => {
-    const value = row[textCol];
-    return typeof value === "string" && value.length > limit
-      ? ({ ...row, [textCol]: `${value.slice(0, limit)}…` } as T)
-      : row;
-  });
-}
-
 // What a hit's `score` means differs per tool, and the direction flips: the
 // engine reports vector kNN as a distance and BM25/RRF as relevance. Every
 // search response says which, so a client never ranks or thresholds backwards.
@@ -431,8 +385,8 @@ server.registerTool(
     description:
       "Use when searching for a concept by meaning and the exact wording is unknown — this retrieves paraphrases and " +
       "synonyms, not just literal matches. Embeds the query with a local model (no API key) and ranks a table's " +
-      "embedding column by vector similarity. Each hit carries a score that is a DISTANCE (lower is closer) and the " +
-      "text column (full, or a snippet — see snippetChars). Optional 'filter' restricts the ranking to rows " +
+      "embedding column by vector similarity. Each hit carries a score that is a DISTANCE (lower is closer) plus the " +
+      "columns you project ('columns'; the full text column by default). Optional 'filter' restricts the ranking to rows " +
       "whose keyword column matches a predicate first (a pushdown pre-filter, e.g. semantic search only within rows " +
       "tagged 'billing'). For exact terms use infino_keyword_search; when the query has both literal terms and an " +
       "intent use infino_hybrid_search.",
@@ -442,12 +396,11 @@ server.registerTool(
       k: z.number().int().positive().max(100).default(10).describe("Maximum results."),
       column: z.string().optional().describe("Text column to return with each hit; inferred if omitted."),
       vectorColumn: z.string().optional().describe("Vector column to search; inferred if omitted."),
-      snippetChars: snippetParam,
       columns: z
         .array(z.string())
         .optional()
         .describe(
-          "Columns to return with each hit (e.g. an id, path, or line range to cite). Defaults to the text column; '_id' and 'score' are always included.",
+          "Which of the table's columns each hit returns, with full values (a projection passed straight to the engine). Defaults to the text column; '_id' and 'score' are always included. Any column works: ['id'] for compact hits at a large k, ['id', 'text'] to get the full text alongside an id to cite, ['title', 'created_at'] for metadata. Nothing is truncated; read fewer columns or a smaller k to keep results small.",
         ),
       filter: z
         .object({
@@ -464,7 +417,7 @@ server.registerTool(
         ),
     },
   },
-  async ({ table, query, k, column, vectorColumn, snippetChars, columns, filter }) => {
+  async ({ table, query, k, column, vectorColumn, columns, filter }) => {
     try {
       const handle = db.openTable(table);
       const vecCol = vectorColumn ?? inferVectorColumn(handle);
@@ -477,7 +430,7 @@ server.registerTool(
         table,
         query,
         score_kind: SCORE_KIND.semantic,
-        results: snippetize(results, textCol, snippetChars ?? SNIPPET_DEFAULT),
+        results,
         took_ms: tookMs,
       });
     } catch (err) {
@@ -493,8 +446,8 @@ server.registerTool(
     description:
       "Use when the query is literal terms — identifiers, error codes, product names, exact phrases — and you want " +
       "results ranked by relevance. BM25 full-text search over a text column: ranks rows by how well the query's " +
-      "tokens (and their stems) match, each with a relevance score (higher is better) and the text column (full, or " +
-      "a snippet — see snippetChars). Matches exact tokens, not synonyms or paraphrases. " +
+      "tokens (and their stems) match, each with a relevance score (higher is better) plus the columns you project " +
+      "('columns'; the full text column by default). Matches exact tokens, not synonyms or paraphrases. " +
       "Prefer this over SQL LIKE for known literal terms. For meaning-based search use infino_semantic_search; for " +
       "both at once use infino_hybrid_search.",
     inputSchema: {
@@ -505,16 +458,15 @@ server.registerTool(
         .string()
         .optional()
         .describe("Text column to search; inferred from the table schema when omitted."),
-      snippetChars: snippetParam,
       columns: z
         .array(z.string())
         .optional()
         .describe(
-          "Columns to return with each hit (e.g. an id, path, or line range to cite). Defaults to the searched column; '_id' and 'score' are always included.",
+          "Which of the table's columns each hit returns, with full values (a projection passed straight to the engine). Defaults to the searched column; '_id' and 'score' are always included. Any column works: ['id'] for compact hits at a large k, ['id', 'text'] to get the full text alongside an id to cite, ['title', 'created_at'] for metadata. Nothing is truncated; read fewer columns or a smaller k to keep results small.",
         ),
     },
   },
-  async ({ table, query, k, column, snippetChars, columns }) => {
+  async ({ table, query, k, column, columns }) => {
     try {
       const handle = db.openTable(table);
       const col = column ?? inferTextColumn(handle);
@@ -529,7 +481,7 @@ server.registerTool(
         column: col,
         query,
         score_kind: SCORE_KIND.keyword,
-        results: snippetize(results, col, snippetChars ?? SNIPPET_DEFAULT),
+        results,
         took_ms: tookMs,
       });
     } catch (err) {
@@ -546,7 +498,7 @@ server.registerTool(
       "Use when a query carries both specific terms and an intent — you want exact-term precision without giving up " +
       "paraphrase recall. Fuses BM25 over a text column with vector similarity over the embedding column in a single " +
       "ranking pass, so rows matching the literal terms AND the meaning rank highest; the score is the fused rank " +
-      "(higher is better) and each hit carries the text column (full, or a snippet — see snippetChars). Embeds the query with a local " +
+      "(higher is better) plus the columns you project ('columns'; the full text column by default). Embeds the query with a local " +
       "model (no API key). Sits between infino_keyword_search (literal only) and infino_semantic_search (meaning only).",
     inputSchema: {
       table: z.string().describe("Table to search."),
@@ -554,16 +506,15 @@ server.registerTool(
       k: z.number().int().positive().max(100).default(10).describe("Maximum results."),
       column: z.string().optional().describe("Text column for the keyword half; inferred if omitted."),
       vectorColumn: z.string().optional().describe("Vector column for the semantic half; inferred if omitted."),
-      snippetChars: snippetParam,
       columns: z
         .array(z.string())
         .optional()
         .describe(
-          "Columns to return with each hit (e.g. an id, path, or line range to cite). Defaults to the text column; '_id' and 'score' are always included.",
+          "Which of the table's columns each hit returns, with full values (a projection passed straight to the engine). Defaults to the text column; '_id' and 'score' are always included. Any column works: ['id'] for compact hits at a large k, ['id', 'text'] to get the full text alongside an id to cite, ['title', 'created_at'] for metadata. Nothing is truncated; read fewer columns or a smaller k to keep results small.",
         ),
     },
   },
-  async ({ table, query, k, column, vectorColumn, snippetChars, columns }) => {
+  async ({ table, query, k, column, vectorColumn, columns }) => {
     try {
       const handle = db.openTable(table);
       const textCol = column ?? inferTextColumn(handle);
@@ -580,7 +531,7 @@ server.registerTool(
         table,
         query,
         score_kind: SCORE_KIND.hybrid,
-        results: snippetize(results, textCol, snippetChars ?? SNIPPET_DEFAULT),
+        results,
         took_ms: tookMs,
       });
     } catch (err) {
