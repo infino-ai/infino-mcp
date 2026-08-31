@@ -51,7 +51,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
-    "@infino-ai/infino": "^0.5.1",
+    "@infino-ai/infino": "^0.5.7",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
   },
