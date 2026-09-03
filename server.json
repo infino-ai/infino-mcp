@@ -29,12 +29,6 @@
           "format": "string"
         },
         {
-          "name": "INFINO_MCP_ENABLE_WRITES",
-          "description": "Set (1/true/yes) to expose add/update/delete tools and allow DDL/DML through SQL. Read-only when unset.",
-          "isRequired": false,
-          "format": "string"
-        },
-        {
           "name": "INFINO_MCP_EMBED_PROVIDER",
           "description": "Embedding provider: 'local' (Hugging Face transformers.js, default) or 'openai' (any OpenAI-compatible /embeddings endpoint, including Azure OpenAI's /openai/v1 surface). Inferred as 'openai' when INFINO_MCP_EMBED_BASE_URL is set.",
           "isRequired": false,

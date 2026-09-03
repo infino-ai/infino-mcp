@@ -7,7 +7,7 @@
 An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com/infino-ai/infino) — it lets an AI agent run **keyword**, **semantic**, **hybrid**, and **SQL** retrieval over your data on object storage, from any MCP-compatible client (Claude Code, Claude Desktop, Cursor, VS Code, and others). Published on npm as [`@infino-ai/mcp-server`](https://www.npmjs.com/package/@infino-ai/mcp-server) and listed on the [official MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.infino-ai/mcp-server` (which propagates to catalogs like Smithery, Glama, and PulseMCP).
 
 - **Local embeddings, no key.** Semantic search embeds queries with a local model — nothing leaves the machine for embedding.
-- **Read-only by default.** Writes and full SQL are opt-in behind a single environment flag.
+- **The agent owns the data.** Every tool, writes included, is always available. On Infino Cloud the API key's capabilities decide what a connection may do; every tool carries MCP annotations so your client can ask before a destructive call.
 - **Local or hosted.** Point it at a local path, your own bucket (S3, Azure, or any S3-compatible store), or a hosted Infino Cloud endpoint with an API key.
 
 ---
@@ -59,8 +59,8 @@ The server is launched by your MCP client over stdio — you don't run it direct
 ```
 
 To serve a **hosted Infino Cloud** database instead, point `INFINO_MCP_URI` at
-the `https://<host>/<database>` endpoint and supply your API key — everything
-else (the tools, the read-only default) is identical:
+the `https://<host>/<database>` endpoint and supply your API key. Everything
+else is identical:
 
 ```jsonc
 {
@@ -86,7 +86,7 @@ For [Claude Code](https://claude.com/claude-code), this repo is also a plugin ma
 /plugin install infino@infino-ai
 ```
 
-On enable you'll be prompted for your **Infino data URI** (`INFINO_MCP_URI`) and whether to **enable writes**. That's it — the `infino_*` tools, the `using-infino` skill, and `/infino-search <query>` are then available. (Other clients: use the [Client setup](#client-setup) configs below.)
+On enable you'll be prompted for your **Infino data URI** (`INFINO_MCP_URI`) and, for Infino Cloud, your **API key**. That's it: the `infino_*` tools, the `using-infino` skill, and `/infino-search <query>` are then available. (Other clients: use the [Client setup](#client-setup) configs below.)
 
 ---
 
@@ -103,7 +103,7 @@ claude mcp add infino \
   -- npx -y @infino-ai/mcp-server
 ```
 
-Add more knobs with repeated `-e` flags, e.g. `-e INFINO_MCP_ENABLE_WRITES=true`. Verify with:
+Add more knobs with repeated `-e` flags, e.g. `-e INFINO_MCP_VALIDATE=true`. Verify with:
 
 ```sh
 claude mcp list
@@ -195,7 +195,6 @@ All configuration is via environment variables — there are no config files and
 | --- | --- | --- | --- |
 | `INFINO_MCP_URI` | No | `~/.infino/mcp` (persistent) | Data to serve: a local path (`/Users/me/.infino/memory`), a bucket URI (`s3://…`, `az://…`), or a hosted endpoint (`https://<host>/<database>`, Infino Cloud). If unset, a durable per-user directory (`~/.infino/mcp`) is used so data persists across restarts; it falls back to an ephemeral in-process catalog (`memory://`) only if that directory can't be created. |
 | `INFINO_API_KEY` | With a hosted URI | — | API key (`inf_…`) for a hosted `https://` endpoint. Required when `INFINO_MCP_URI` is an `https://` URI; ignored for local and object-storage connections. |
-| `INFINO_MCP_ENABLE_WRITES` | No | _off_ | When set (`1`/`true`/`yes`), exposes `infino_add_documents` **and** lets `infino_sql` run DDL/DML. Omit for a strictly read-only server. |
 | `INFINO_MCP_EMBED_PROVIDER` | No | `local` | Embedding provider: `local` (Hugging Face transformers.js, no key, nothing leaves the machine) or `openai` (any OpenAI-compatible `/embeddings` endpoint — OpenAI, Azure OpenAI's `/openai/v1` surface, or a compatible server). Inferred as `openai` when `INFINO_MCP_EMBED_BASE_URL` is set. |
 | `INFINO_MCP_EMBED_BASE_URL` | With `openai` | — | Base URL of the OpenAI-compatible embeddings API, e.g. `https://api.openai.com/v1` or `https://<resource>.openai.azure.com/openai/v1`. The server POSTs to `<base>/embeddings`. |
 | `INFINO_MCP_EMBED_API_KEY` | No | — | API key for the `openai` provider. Sent as both `Authorization: Bearer` and `api-key`, so one value works for OpenAI and Azure OpenAI. Omit to call an unauthenticated or ambient-identity endpoint. |
@@ -260,7 +259,7 @@ The model must match what produced the stored vectors — a mismatch yields mean
 }
 ```
 
-On a hosted connection the search, SQL, and (when enabled) write tools all
+On a hosted connection the search, SQL, and write tools all
 behave exactly as they do locally — the only difference is where the data
 lives. Compaction and garbage collection are handled server-side, so they are
 not exposed as client operations. Note that semantic and hybrid search still
@@ -276,21 +275,37 @@ the data.
 | Tool | Arguments | What it does |
 | --- | --- | --- |
 | `infino_semantic_search` | `table`, `query`, `k`, `column?`, `vectorColumn?`, `columns?`, `filter?` | Find passages by **meaning** — embeds the query with a local model (no key) and ranks by vector similarity. Handles paraphrase and synonyms. `score` is a **distance** (lower is closer). Optional `filter` (`{column, query, mode?}`) restricts the ranking to rows whose keyword column matches first (a pushdown pre-filter). Optional `columns` chooses which fields each hit returns (e.g. a path + line range to cite); defaults to the text column, with `_id` and `score` always included. |
-| `infino_keyword_search` | `table`, `query`, `k`, `column?`, `columns?` | BM25 full-text search — for exact terms, identifiers, error codes, product names. `score` is a relevance (higher is better). |
-| `infino_hybrid_search` | `table`, `query`, `k`, `column?`, `vectorColumn?`, `columns?` | **Fused** keyword + semantic search in one ranking pass — BM25 over the text column combined with vector similarity, so rows matching the literal terms *and* the meaning rank highest. `score` is the fused rank (higher is better). |
+| `infino_keyword_search` | `table`, `query`, `k`, `column?`, `mode?`, `stats?`, `columns?` | BM25 full-text search — for exact terms, identifiers, error codes, product names. `score` is a relevance (higher is better). `mode` is `or` (default) or `and`; `stats` is `per_superfile` (default) or `global` for one table-wide idf. |
+| `infino_hybrid_search` | `table`, `query`, `k`, `column?`, `vectorColumn?`, `mode?`, `columns?` | **Fused** keyword + semantic search in one ranking pass — BM25 over the text column combined with vector similarity, so rows matching the literal terms *and* the meaning rank highest. `score` is the fused rank (higher is better). |
 | `infino_token_match` | `table`, `query`, `column?`, `mode?`, `limit?` | Unranked keyword filter — the set of rows whose text column contains the token(s). Use when you need the matches, not a relevance order. |
 | `infino_exact_match` | `table`, `value`, `column?`, `limit?` | Unranked exact-equality filter over an indexed column (tag, status, id string). |
 | `infino_count` | `table`, `query`, `column?`, `mode?` | Count how many rows match a keyword query, without fetching them — a fast tally over the text column. For the matching rows use `infino_keyword_search` or `infino_token_match`. |
-| `infino_sql` | `query` | SQL for counts, filters, joins, aggregates. Read-only (single `SELECT`/`WITH`) by default; accepts any single statement when `INFINO_MCP_ENABLE_WRITES` is set. |
+| `infino_sql` | `query`, `embed?` | SQL for counts, filters, joins, aggregates. The engine's search table functions are callable inside it; a `{{name}}` placeholder is filled with the vector of `embed[name]`. Any single statement, DDL/DML included. |
 | `infino_list_tables` | — | List the tables in the connected catalog. |
 | `infino_describe_table` | `table` | Column names and types for a table. |
-| `infino_add_documents` | `table`, `documents` | Append rows (one call = one commit); embeds the text column for vector tables. **Only when `INFINO_MCP_ENABLE_WRITES` is set.** |
-| `infino_update_documents` | `table`, `predicate`, `documents` | Replace the rows matching a SQL predicate with new documents, 1:1 (missing vectors are embedded). Durable storage only. **Only when `INFINO_MCP_ENABLE_WRITES` is set.** |
-| `infino_delete_documents` | `table`, `predicate` | Delete the rows matching a SQL predicate. Durable storage only. **Only when `INFINO_MCP_ENABLE_WRITES` is set.** |
+| `infino_create_database` | — | Provision the database the connection names (Infino Cloud); a no-op success locally. Idempotent. |
+| `infino_create_table` | `table`, `columns`, `fts?`, `vector?` | Create a table from a `{column: type}` descriptor. Full-text indexes on `fts` (default: every `large_utf8` column). `vector: true` adds an `embedding` column sized to the server's embedder, with a cosine index. |
+| `infino_drop_table` | `table`, `purge?` | Drop a table and, by default, delete its storage objects; `purge: false` only unregisters the name. |
+| `infino_add_documents` | `table`, `documents` | Append rows (one call = one commit). Rows without a vector are embedded from the text column, all in one batch; the result reports `appended` and `embedded`. A key that is not a column is an error. |
+| `infino_update_documents` | `table`, `predicate`, `documents` | Replace the rows matching a SQL predicate with new documents, 1:1 (missing vectors are embedded). Durable storage only. |
+| `infino_delete_documents` | `table`, `predicate` | Delete the rows matching a SQL predicate. Durable storage only. |
 
 Search hits return **full column values** — the `columns` argument is a projection passed straight to the engine (embedded or hosted), so any column in the table can come back with each hit: `["id"]` for compact hits at a large `k`, `["id", "text"]` for the full text alongside an id to cite, metadata columns for filtering. It defaults to the text column, with `_id` and `score` always included, and nothing is ever truncated; to keep results small, project fewer columns or ask for a smaller `k`. Every search response also carries `score_kind`, stating whether its `score` is a distance (semantic: lower is closer) or a relevance (keyword and hybrid: higher is better).
 
-The engine's search table functions (`bm25_search`, `vector_search`, `hybrid_search`, …) are not callable from `infino_sql` — retrieval goes through the dedicated search tools above, which embed and project for you. `infino_sql` is for filters, joins, and aggregates.
+For plain retrieval prefer the dedicated search tools, which embed and project for you. `infino_sql` is for filters, joins, and aggregates, including over a search table function's results, so one query can rank and aggregate at once.
+
+### Writing data
+
+The write path an agent follows, each step one tool call and one commit:
+
+1. `infino_create_database` if a hosted database answers 404.
+2. `infino_create_table` with a `utf8` key column, `large_utf8` text columns, and `vector: true` for semantic search. The server sizes the vector column to its embedder; the agent never types a dimension. Keep the result: its `indexes` field is the only record of which columns are indexed.
+3. `infino_add_documents`, tens of rows per call, always including the key. Missing vectors are embedded in one batch.
+4. To replace rows, `infino_delete_documents` by key predicate, then add again. To remove rows, check the predicate with `infino_count` first.
+
+A tool call carries tens of documents. For a whole corpus, use the [`infino` CLI](https://github.com/infino-ai/infino-cli) (`infino ingest` takes Parquet or NDJSON against the same URI) or an SDK. The CLI is bring-your-own-vectors like the engine, so include the `embedding` column in the rows or load text and search by keyword.
+
+There is no server-side write gate, and the retired `INFINO_MCP_ENABLE_WRITES` variable is ignored (the server says so on stderr if it is set). On Infino Cloud the API key's capabilities bound what the connection may do: a read-scoped key is refused every write, and the tool result says to mint one with write capability. Locally, point the server only at data the agent may change.
 
 ---
 
@@ -299,9 +314,9 @@ The engine's search table functions (`bm25_search`, `vector_search`, `hybrid_sea
 This server runs locally, beside the client, and keeps data and credentials on the user's machine.
 
 - **Local execution, no inbound listener.** It runs as a subprocess of your MCP client over stdio and opens no network listener. In the default local/bucket mode it contacts no remote service. When `INFINO_MCP_URI` is a hosted `https://` endpoint, it makes **outbound** TLS calls to that endpoint to serve searches, SQL, and (if enabled) writes — so the data in those requests reaches the hosted service you configured, and nothing else.
-- **No data sent for embedding.** Query and document embedding uses a local model — text is never sent to a third-party embedding API. There is no embedding API key to provision or leak. (This holds in both local and hosted mode: only the resulting query vector, not the raw text of the embed input, is sent to a hosted endpoint.)
+- **No data sent for embedding, by default.** With the default provider, query and document embedding uses a local model, so text is never sent to a third-party embedding API and there is no embedding API key to provision or leak. In hosted mode only the resulting vector, not the text, reaches the Infino Cloud endpoint. If you configure the OpenAI-compatible provider, the text being embedded is sent to the endpoint you name.
 - **Credentials stay in the environment.** Storage credentials (`AWS_*`/`AZURE_*`) and the hosted API key (`INFINO_API_KEY`) are read from environment variables and used only to reach the store or endpoint you configured. They are never logged or returned in tool output.
-- **Read-only by default.** Without `INFINO_MCP_ENABLE_WRITES`, the write tool is not even advertised to the agent, and `infino_sql` rejects anything but a single `SELECT`/`WITH`. Enable writes deliberately, and prefer scoping the server to data the agent is allowed to modify.
+- **Who can write is decided outside the server.** The full toolset, writes included, is always available to the agent. On Infino Cloud the API key's capabilities bound what the connection may do (a read-scoped key is refused every write). Locally, point the server only at data the agent may change. Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`) so your client can ask for confirmation on its own terms.
 - **Least privilege.** Point `INFINO_MCP_URI` at the narrowest dataset the task needs, and supply storage credentials scoped to that bucket/prefix.
 
 ---
@@ -320,11 +335,11 @@ If you change `INFINO_MCP_EMBED_MODEL`, the table's vector index must match the 
 | --- | --- |
 | Client shows no Infino tools | Server didn't start — check the client's MCP logs (stderr). Confirm `npx` is on `PATH` and `INFINO_MCP_URI` is set. Fully restart the client after editing config. |
 | `INFINO_MCP_URI is required` | The env var isn't reaching the subprocess. In GUI clients, env must be inside the server's `env` block (the process won't inherit your shell). |
-| `add_documents` not available | `INFINO_MCP_ENABLE_WRITES` isn't set, or the client wasn't restarted after setting it. |
+| A write says the key "was rejected or lacks write capability" | On Infino Cloud the API key is read-scoped (HTTP 403) or wrong. Mint a key with write capability and restart the server with it. |
+| A write says "another writer won the commit race" | Two writers hit the same table at once and this call did not land. Reissue it. |
 | Slow first query | One-time embedding-model download (~90 MB). Subsequent runs use the cache. |
 | Auth error against a hosted `https://` URI | `INFINO_API_KEY` is missing, wrong, or lacks access to that database. Confirm the key (`inf_…`) and that the URI's last path segment is a database you can reach. |
 | Dimension / vector errors on semantic search | The table's vector index doesn't match the embedding model's dimension. Re-ingest, or set `INFINO_MCP_EMBED_MODEL` to the model the index was built with. |
-| `… in SQL isn't supported from the server yet` | You called a search table function inside `infino_sql`. Use `infino_semantic_search` / `infino_keyword_search` instead. |
 
 ---
 
