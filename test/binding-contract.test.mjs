@@ -159,3 +159,32 @@ test("delete removes matched rows and reports stats", () => {
   const rows = db.querySql(`SELECT COUNT(*) AS n FROM ${TABLE}`);
   assert.equal(Number(rows[0].n), ROWS.length - 1);
 });
+
+// The catalog-management tools (infino_create_database / infino_create_table /
+// infino_drop_table) are direct binding calls; pin the behaviour they rely on.
+test("createDatabase is a no-op success on a local catalog", () => {
+  assert.doesNotThrow(() => db.createDatabase());
+});
+
+test("createTable accepts a {column: type} descriptor with a sized vector column", () => {
+  const t = db.createTable(
+    "described",
+    { key: "utf8", body: "large_utf8", n: "int64", embedding: { vector: DIM } },
+    new IndexSpec().fts("body").vector("embedding", DIM, "cosine"),
+  );
+  const fields = t.schema().fields;
+  assert.deepEqual(
+    fields.map((f) => f.name),
+    ["key", "body", "n", "embedding"],
+  );
+  // The server sizes and checks vector columns through `listSize`.
+  assert.equal(fields[3].type.listSize, DIM);
+  // int64 columns take BigInt, which is why the server widens JSON numbers.
+  assert.throws(() => t.append([{ key: "a", body: "x", n: 1, embedding: unit(0) }]), /BigInt/);
+  assert.doesNotThrow(() => t.append([{ key: "a", body: "x", n: 1n, embedding: unit(0) }]));
+});
+
+test("dropTable removes the table from listTables", () => {
+  db.dropTable("described", true);
+  assert.ok(!db.listTables().includes("described"));
+});
