@@ -5,8 +5,7 @@
       "args": ["-y", "@infino-ai/mcp-server"],
       "env": {
         "INFINO_MCP_URI": "${user_config.infino_uri}",
-        "INFINO_API_KEY": "${user_config.infino_api_key}",
-        "INFINO_MCP_ENABLE_WRITES": "${user_config.enable_writes}"
+        "INFINO_API_KEY": "${user_config.infino_api_key}"
       }
     }
   }

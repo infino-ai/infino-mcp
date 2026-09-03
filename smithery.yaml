@@ -21,11 +21,6 @@ startCommand:
         type: string
         title: Infino Cloud API key (hosted only)
         description: "API key for a hosted https:// endpoint. Leave blank for a local path or bucket URI."
-      enableWrites:
-        type: boolean
-        default: false
-        title: Enable writes
-        description: "Expose the add/update/delete tools and allow DDL/DML through SQL. Leave off for a read-only server."
       embedProvider:
         type: string
         enum: [local, openai]
@@ -51,7 +46,6 @@ startCommand:
       env: {
         INFINO_MCP_URI: config.infinoMcpUri,
         ...(config.apiKey ? { INFINO_API_KEY: config.apiKey } : {}),
-        ...(config.enableWrites ? { INFINO_MCP_ENABLE_WRITES: 'true' } : {}),
         ...(config.embedProvider ? { INFINO_MCP_EMBED_PROVIDER: config.embedProvider } : {}),
         ...(config.embedBaseUrl ? { INFINO_MCP_EMBED_BASE_URL: config.embedBaseUrl } : {}),
         ...(config.embedApiKey ? { INFINO_MCP_EMBED_API_KEY: config.embedApiKey } : {}),

@@ -2,11 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright The Infino Authors
 //
-// MCP server for Infino — lets an agent run retrieval over data on object
-// storage from any MCP client. Exposes catalog discovery (list/describe),
-// keyword (BM25), semantic (local-embedding vector), and hybrid (fused)
-// search, unranked token/exact match, and read-only SQL; document writes
-// (add/update/delete) and full SQL are opt-in behind INFINO_MCP_ENABLE_WRITES.
+// MCP server for Infino. Lets an agent run retrieval and writes over data on
+// object storage from any MCP client. Exposes catalog discovery and management
+// (list/describe/create/drop), keyword (BM25), semantic (local-embedding
+// vector), and hybrid (fused) search, unranked token/exact match, SQL, and
+// document writes (add/update/delete).
+//
+// Scope rule: one tool per operation the `@infino-ai/infino` binding exposes,
+// plus the one piece of glue the engine's bring-your-own-vectors model forces
+// on an agent: turning text into a vector (see embedding.ts). Nothing else is
+// invented here; bulk ingestion, chunking, and upsert live in the CLI, the
+// SDKs, or the engine.
+//
+// The full surface is always advertised. Who may write is decided by the
+// hosted API key's capabilities (a read-scoped key gets 403 on writes) and by
+// whoever configured the local path or bucket credentials; how much a client
+// confirms before a destructive call is the client's decision, driven by the
+// tool annotations below. There is no server-side write gate.
 
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -14,8 +26,9 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { connect, type ConnectOptions } from "@infino-ai/infino";
-import { embed, embedderInfo } from "./embedding.js";
+import { connect, IndexSpec, type ConnectOptions } from "@infino-ai/infino";
+import { embed, embedMany, embedderDim, embedderInfo } from "./embedding.js";
+import { errText as translate, guardSql } from "./guards.js";
 
 // --- connection (env-configured, opened once at startup) -------------------
 //
@@ -39,16 +52,15 @@ function defaultUri(): string {
   try {
     mkdirSync(dir, { recursive: true });
     console.error(
-      `INFINO_MCP_URI not set — using ${dir} (persistent; read-only until ` +
-        "INFINO_MCP_ENABLE_WRITES is set). Set INFINO_MCP_URI to point at your " +
-        "own path, an s3://|az:// bucket, or a hosted https://<host>/<database> " +
-        "endpoint.",
+      `INFINO_MCP_URI not set; using ${dir} (persistent). Set INFINO_MCP_URI to ` +
+        "point at your own path, an s3://|az:// bucket, or a hosted " +
+        "https://<host>/<database> endpoint.",
     );
     return dir;
   } catch (err) {
     console.error(
       `INFINO_MCP_URI not set and ${dir} is not writable ` +
-        `(${errText(err)}) — serving an ephemeral in-process ` +
+        `(${translate(err)}); serving an ephemeral in-process ` +
         "catalog (memory://).",
     );
     return "memory://";
@@ -132,17 +144,48 @@ let db: ReturnType<typeof connect>;
 try {
   db = connect(uri, connectOptions);
 } catch (err) {
-  console.error(`Failed to connect to ${uri}: ${errText(err)}`);
+  console.error(`Failed to connect to ${uri}: ${translate(err, { hosted: isHosted })}`);
   process.exit(1);
 }
 
-// Writes (infino_add_documents) are off unless explicitly enabled, so the
-// default install is read-only and the write tool isn't even advertised.
-const writesEnabled = ["1", "true", "yes"].includes(
-  (process.env.INFINO_MCP_ENABLE_WRITES ?? "").toLowerCase(),
-);
+
+// Writes used to sit behind INFINO_MCP_ENABLE_WRITES. The variable is accepted
+// and ignored so an existing config keeps booting; it is never honored, because
+// honoring it would reintroduce the read-only mode this server no longer has.
+if (process.env.INFINO_MCP_ENABLE_WRITES !== undefined) {
+  console.error(
+    "INFINO_MCP_ENABLE_WRITES is set but no longer read: writes are always on. " +
+      "Remove the variable; scope the API key instead to restrict a hosted connection.",
+  );
+}
 
 // --- helpers ---------------------------------------------------------------
+
+// Tool annotations, per the MCP spec: the client reads these to decide what to
+// confirm with its user. With no server-side write gate they are the safety
+// signal, so every tool carries one. `openWorldHint` says whether the call
+// leaves the machine, which on a hosted connection every one of them does.
+const READ_ONLY = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: isHosted,
+} as const;
+// Adds data without replacing or removing any: a repeat is a duplicate, not a loss.
+const ADDITIVE = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: isHosted,
+} as const;
+const ADDITIVE_IDEMPOTENT = { ...ADDITIVE, idempotentHint: true } as const;
+// May replace or remove data.
+const DESTRUCTIVE = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: isHosted,
+} as const;
 
 // `_id` comes back as a bigint, which JSON can't serialize — render it as a string.
 const toText = (value: unknown) =>
@@ -192,39 +235,9 @@ const fail = (message: string) => ({
   isError: true,
 });
 
-// Translate raw engine/transport errors into messages an agent (or human)
-// can act on. Two sources of signal: the HTTP status a hosted (Infino Cloud)
-// connection attaches to thrown errors, and the engine's index-metadata
-// errors, which surface when a search needs an index the table wasn't
-// created with.
-function errText(err: unknown): string {
-  const e = err as Error & { status?: number };
-  const message = e?.message ?? String(err);
-  if (/KV metadata key "inf\.fts\./.test(message)) {
-    return (
-      "this table has no full-text index, so keyword/BM25/hybrid search is " +
-      "unavailable on it — query it with infino_sql instead, or recreate the " +
-      "table with an FTS index on the text column"
-    );
-  }
-  if (/KV metadata key "inf\.vec\./.test(message)) {
-    return (
-      "this table has no vector index, so semantic/hybrid search is " +
-      "unavailable on it — query it with infino_sql instead, or recreate the " +
-      "table with a vector index"
-    );
-  }
-  if (e?.status === 503) {
-    return "the database is starting up (transient 503) — retry in a few seconds";
-  }
-  if (e?.status === 404) {
-    return `not found (404): ${message}`;
-  }
-  if (e?.status === 409) {
-    return `already exists (409): ${message}`;
-  }
-  return message;
-}
+// Error translation lives in guards.ts; this binds the connection mode so call
+// sites only say what kind of operation failed.
+const errText = (err: unknown, op?: "create" | "write") => translate(err, { op, hosted: isHosted });
 
 // When the caller doesn't name a column, infer the searchable text column.
 // FTS indexes require LargeUtf8, so a LargeUtf8 column is almost certainly
@@ -249,45 +262,96 @@ function inferVectorColumn(table: { schema(): { fields: Array<{ name: string; ty
   return field?.name;
 }
 
-// When a table has a vector index, fill in a missing vector for each row by
-// embedding its text column with the local model. Shared by the add and update
-// write tools so an agent can pass plain text and never a raw vector.
+// Rows arrive as JSON objects keyed by column name. Before they reach the
+// binding: (1) a key that is not a column is an error naming it, because the
+// binding builds columns from the schema and would otherwise drop the key
+// silently; (2) int64 columns need BigInt, which JSON cannot carry, so numbers
+// are widened here; (3) a row with no vector gets one from its text column.
+// Shared by the add and update tools.
 type SchemaHandle = { schema(): { fields: Array<{ name: string; type: unknown }> } };
+async function prepareRows(
+  handle: SchemaHandle,
+  table: string,
+  rows: Array<Record<string, unknown>>,
+): Promise<{ rows: Array<Record<string, unknown>>; embedded: number }> {
+  const fields = handle.schema().fields as Array<{ name: string; type: unknown; nullable?: boolean }>;
+  const columns = fields.map((f) => f.name);
+  // A table created from a descriptor has no nullable columns, so a row that
+  // omits one fails inside Arrow with a message about nullability. Name the
+  // column instead. The vector column is exempt: embedRows fills it in.
+  const vecCol = inferVectorColumn(handle);
+  const required = fields.filter((f) => f.nullable === false && f.name !== vecCol).map((f) => f.name);
+  rows.forEach((doc, i) => {
+    for (const key of Object.keys(doc)) {
+      if (!columns.includes(key)) {
+        throw new Error(
+          `document ${i}: '${key}' is not a column of this table (columns: ${columns.join(", ")})`,
+        );
+      }
+    }
+    const missing = required.filter((c) => doc[c] == null);
+    if (missing.length > 0) {
+      throw new Error(
+        `document ${i}: missing ${missing.map((c) => `'${c}'`).join(", ")}; every column of this table is required in each row (columns: ${columns.join(", ")})`,
+      );
+    }
+  });
+  const int64 = fields.filter((f) => /int64/i.test(String(f.type))).map((f) => f.name);
+  const widened =
+    int64.length === 0
+      ? rows
+      : rows.map((doc) => {
+          const out = { ...doc };
+          for (const col of int64) {
+            if (typeof out[col] === "number") out[col] = BigInt(Math.trunc(out[col] as number));
+          }
+          return out;
+        });
+  return embedRows(handle, widened, table);
+}
+
+// The configured embedder must produce vectors as wide as the table's vector
+// column, or every vector written or searched is meaningless (and the engine
+// rejects the width). Checked once per table and column, before the first
+// embedding into or against it, so a mismatch names both numbers up front
+// instead of surfacing as an Arrow length error.
+const widthChecked = new Set<string>();
+async function assertVectorWidth(handle: SchemaHandle, table: string, vecCol: string): Promise<void> {
+  const key = `${table} ${vecCol}`;
+  if (widthChecked.has(key)) return;
+  const field = handle.schema().fields.find((f) => f.name === vecCol);
+  const width = (field?.type as { listSize?: number } | undefined)?.listSize;
+  const dim = await embedderDim();
+  if (typeof width === "number" && width !== dim) {
+    throw new Error(
+      `the embedder produces ${dim}-dimensional vectors but '${vecCol}' in '${table}' is ${width}-dimensional; ` +
+        "set INFINO_MCP_EMBED_MODEL (and provider) to the model that built this table, or recreate the table",
+    );
+  }
+  widthChecked.add(key);
+}
+
+// When a table has a vector index, fill in a missing vector for each row by
+// embedding its text column, every missing vector in one batched call.
+// Returns the rows and how many were embedded.
 async function embedRows(
   handle: SchemaHandle,
   rows: Array<Record<string, unknown>>,
-): Promise<Array<Record<string, unknown>>> {
+  table: string,
+): Promise<{ rows: Array<Record<string, unknown>>; embedded: number }> {
   const vecCol = inferVectorColumn(handle);
-  if (!vecCol) return rows;
+  if (!vecCol) return { rows, embedded: 0 };
   const textCol = inferTextColumn(handle);
-  return Promise.all(
-    rows.map(async (doc) =>
-      doc[vecCol] == null && textCol && typeof doc[textCol] === "string"
-        ? { ...doc, [vecCol]: await embed(doc[textCol] as string) }
-        : doc,
-    ),
-  );
-}
-
-// Search table functions are routed to the dedicated search tools instead of
-// infino_sql. This is now a usability policy, not a technical limit: search
-// Guard for infino_sql. The engine's search TVFs (bm25_search / vector_search /
-// hybrid_search / token_match / exact_match) ARE allowed here — they compose
-// with GROUP BY / joins / aggregates, which is the point of exposing SQL. The
-// vector TVFs need a query vector, which applyEmbeds() supplies from {{name}}
-// placeholders. The one restriction is the read-only policy (single statement,
-// must start with SELECT/WITH), gated by the same INFINO_MCP_ENABLE_WRITES
-// switch as infino_add_documents: off → read-only, so the default install can't
-// write through SQL; on → any single statement (DDL/DML) is allowed.
-function guardSql(sql: string, allowWrites: boolean): string {
-  const stripped = sql.trim().replace(/;\s*$/, "");
-  if (stripped.includes(";")) throw new Error("only a single statement is allowed");
-  if (!allowWrites && !/^(select|with)\b/i.test(stripped)) {
-    throw new Error(
-      "only read-only SELECT / WITH queries are allowed (set INFINO_MCP_ENABLE_WRITES to permit DDL/DML through SQL)",
-    );
-  }
-  return stripped;
+  const pending: number[] = [];
+  rows.forEach((doc, i) => {
+    if (doc[vecCol] == null && textCol && typeof doc[textCol] === "string") pending.push(i);
+  });
+  if (pending.length === 0) return { rows, embedded: 0 };
+  await assertVectorWidth(handle, table, vecCol);
+  const vectors = await embedMany(pending.map((i) => rows[i][textCol as string] as string));
+  const out = rows.slice();
+  pending.forEach((i, n) => (out[i] = { ...out[i], [vecCol]: vectors[n] }));
+  return { rows: out, embedded: pending.length };
 }
 
 // --- server ----------------------------------------------------------------
@@ -310,8 +374,14 @@ const server = new McpServer(
       "- infino_sql — counts, joins, aggregates, and filtering by exact column value (structural, not relevance).\n" +
       "- infino_token_match / infino_exact_match — unranked keyword / exact-equality filters.\n" +
       "- infino_list_tables / infino_describe_table — discover the tables and their columns before searching.\n\n" +
-      "The server is read-only by default; document writes (add/update/delete) and DDL/DML SQL are available " +
-      "only when the operator has enabled writes.",
+      "Writing data, in order: infino_create_database if a hosted database answers 404; infino_create_table " +
+      "with a utf8 key column, large_utf8 text columns, and vector: true for semantic search (the server sizes " +
+      "the vector column to its embedder); infino_add_documents with tens of rows per call, always including " +
+      "the key; rows without a vector are embedded from their text. To replace rows, infino_delete_documents " +
+      "by key predicate then add again; before any delete, check the predicate with infino_count or infino_sql. " +
+      "Every write is one commit and is durable when the tool returns. For a whole corpus use the infino CLI " +
+      "(infino ingest) or an SDK, not this server. There is no server-side write gate: the API key's " +
+      "capabilities decide what a hosted connection may do, and you are responsible for what you change.",
   },
 );
 
@@ -319,6 +389,7 @@ server.registerTool(
   "infino_list_tables",
   {
     title: "List Infino tables",
+    annotations: READ_ONLY,
     description:
       "List the tables in the connected catalog. Call this first to discover what is available to search or query.",
     inputSchema: {},
@@ -336,6 +407,7 @@ server.registerTool(
   "infino_describe_table",
   {
     title: "Describe an Infino table",
+    annotations: READ_ONLY,
     description:
       "Return a table's column names and types — call before searching so you know which column to target and what " +
       "fields each result row carries.",
@@ -352,6 +424,140 @@ server.registerTool(
       return ok({ table, columns });
     } catch (err) {
       return fail(`describe_table failed: ${errText(err)}`);
+    }
+  },
+);
+
+// --- catalog management ------------------------------------------------------
+
+server.registerTool(
+  "infino_create_database",
+  {
+    title: "Create the database this server is connected to",
+    annotations: ADDITIVE_IDEMPOTENT,
+    description:
+      "Provision the database named in the connection. On Infino Cloud this registers the database; on a " +
+      "local path or bucket the catalog root is the database, so this is a no-op success. Idempotent: an " +
+      "existing database is reported as created: false. Call it when a hosted connection answers 404.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      db.createDatabase();
+      return ok({ created: true });
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      if (e?.status === 409) return ok({ created: false, note: "database already exists" });
+      return fail(`create_database failed: ${errText(err, "create")}`);
+    }
+  },
+);
+
+// The scalar column types the binding's schema descriptor accepts. Full-text
+// indexes require large_utf8, which is why the descriptor spells both string
+// widths out instead of offering a single "string".
+const COLUMN_TYPES = ["utf8", "large_utf8", "bool", "int32", "int64", "float32", "float64"] as const;
+// Name of the vector column `vector: true` adds. Fixed so the skill, the
+// searches' column inference, and the tables the server creates all agree.
+const VECTOR_COLUMN = "embedding";
+
+server.registerTool(
+  "infino_create_table",
+  {
+    title: "Create an Infino table",
+    annotations: ADDITIVE,
+    description:
+      "Create a table from a {column: type} descriptor. Full-text (BM25) indexes go on the columns named in " +
+      "'fts' (default: every large_utf8 column; the index requires that type). With vector: true the server " +
+      "adds an 'embedding' column sized to its embedder and a cosine vector index on it, so semantic and hybrid " +
+      "search work and rows added without a vector are embedded from their text. Every column is required in " +
+      "every row you add, so declare only columns you will always fill. Give every table a stable key " +
+      "column of type utf8 so rows can be replaced or removed later by predicate (e.g. key = 'doc-1'); keep " +
+      "utf8 for ids and short labels and large_utf8 for the text to search, so the searches infer the right column.",
+    inputSchema: {
+      table: z.string().describe("Table name."),
+      columns: z
+        .record(z.string(), z.enum(COLUMN_TYPES))
+        .describe(
+          "Columns as {name: type}. large_utf8 for text to search; utf8 for a key, ids, and short labels.",
+        ),
+      fts: z
+        .array(z.string())
+        .optional()
+        .describe("Columns to full-text index. Default: every large_utf8 column. Must be large_utf8."),
+      vector: z
+        .boolean()
+        .optional()
+        .describe(
+          "Add an 'embedding' vector column sized to the server's embedder, with a cosine index. Default false.",
+        ),
+    },
+  },
+  async ({ table, columns, fts, vector }) => {
+    try {
+      const descriptor = { ...columns } as Record<string, string | { vector: number }>;
+      const vectorColumns: string[] = [];
+      let spec = new IndexSpec();
+      if (vector) {
+        if (VECTOR_COLUMN in descriptor) {
+          return fail(
+            `create_table: '${VECTOR_COLUMN}' is reserved for the vector column that vector: true adds; rename it.`,
+          );
+        }
+        const dim = await embedderDim();
+        descriptor[VECTOR_COLUMN] = { vector: dim };
+        spec = spec.vector(VECTOR_COLUMN, dim, "cosine");
+        vectorColumns.push(VECTOR_COLUMN);
+      }
+      const ftsColumns =
+        fts ?? Object.entries(columns).filter(([, t]) => t === "large_utf8").map(([n]) => n);
+      for (const col of ftsColumns) {
+        if (!(col in descriptor)) return fail(`create_table: fts column '${col}' is not in 'columns'.`);
+        if (descriptor[col] !== "large_utf8") {
+          return fail(
+            `create_table: fts column '${col}' is ${descriptor[col]}; a full-text index requires large_utf8.`,
+          );
+        }
+      }
+      for (const col of ftsColumns) spec = spec.fts(col);
+      const handle = db.createTable(table, descriptor, spec);
+      const schema = handle
+        .schema()
+        .fields.map((f: { name: string; type: unknown }) => ({ name: f.name, type: String(f.type) }));
+      return ok({ table, columns: schema, indexes: { fts: ftsColumns, vector: vectorColumns } });
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      if (e?.status === 409 || /already ?exists/i.test(e?.message ?? "")) {
+        return fail(`create_table: table '${table}' already exists; inspect it with infino_describe_table.`);
+      }
+      return fail(`create_table failed: ${errText(err, "create")}`);
+    }
+  },
+);
+
+server.registerTool(
+  "infino_drop_table",
+  {
+    title: "Drop an Infino table",
+    annotations: DESTRUCTIVE,
+    description:
+      "Drop a table from the catalog and, by default, delete its storage objects too. Pass purge: false to only " +
+      "unregister the table and leave the bytes in place. Irreversible.",
+    inputSchema: {
+      table: z.string().describe("Table to drop."),
+      purge: z
+        .boolean()
+        .optional()
+        .describe("Also delete the table's storage objects. Default true; false only unregisters the name."),
+    },
+  },
+  async ({ table, purge }) => {
+    try {
+      const reclaim = purge ?? true;
+      db.dropTable(table, reclaim);
+      return ok({ table, dropped: true, purged: reclaim });
+    } catch (err) {
+      return fail(`drop_table failed: ${errText(err, "write")}`);
     }
   },
 );
@@ -382,6 +588,7 @@ server.registerTool(
   "infino_semantic_search",
   {
     title: "Semantic (vector) search",
+    annotations: READ_ONLY,
     description:
       "Use when searching for a concept by meaning and the exact wording is unknown — this retrieves paraphrases and " +
       "synonyms, not just literal matches. Embeds the query with a local model (no API key) and ranks a table's " +
@@ -423,6 +630,7 @@ server.registerTool(
       const vecCol = vectorColumn ?? inferVectorColumn(handle);
       if (!vecCol) return fail(`semantic_search: no vector column in '${table}' — pass 'vectorColumn'.`);
       const textCol = column ?? inferTextColumn(handle);
+      await assertVectorWidth(handle, table, vecCol);
       const vector = await embed(query);
       const projection = searchProjection(columns, textCol);
       const { value: results, tookMs } = timed(() => handle.vectorSearch(vecCol, vector, k, { projection, filter }));
@@ -443,6 +651,7 @@ server.registerTool(
   "infino_keyword_search",
   {
     title: "Keyword (BM25) search",
+    annotations: READ_ONLY,
     description:
       "Use when the query is literal terms — identifiers, error codes, product names, exact phrases — and you want " +
       "results ranked by relevance. BM25 full-text search over a text column: ranks rows by how well the query's " +
@@ -458,6 +667,16 @@ server.registerTool(
         .string()
         .optional()
         .describe("Text column to search; inferred from the table schema when omitted."),
+      mode: z
+        .enum(["or", "and"])
+        .optional()
+        .describe("Match any query token ('or', the default) or require every token ('and')."),
+      stats: z
+        .enum(["per_superfile", "global"])
+        .optional()
+        .describe(
+          "BM25 statistics scope: 'per_superfile' (the default; each segment scored against its own statistics) or 'global' (one table-wide idf, so a table written in many small batches ranks like one corpus).",
+        ),
       columns: z
         .array(z.string())
         .optional()
@@ -466,7 +685,7 @@ server.registerTool(
         ),
     },
   },
-  async ({ table, query, k, column, columns }) => {
+  async ({ table, query, k, column, mode, stats, columns }) => {
     try {
       const handle = db.openTable(table);
       const col = column ?? inferTextColumn(handle);
@@ -474,7 +693,7 @@ server.registerTool(
         return fail(`keyword_search: no text column found in '${table}' — pass 'column' explicitly.`);
       }
       const { value: results, tookMs } = timed(() =>
-        handle.bm25Search(col, query, k, { projection: searchProjection(columns, col) }),
+        handle.bm25Search(col, query, k, { mode, stats, projection: searchProjection(columns, col) }),
       );
       return ok({
         table,
@@ -494,6 +713,7 @@ server.registerTool(
   "infino_hybrid_search",
   {
     title: "Hybrid (keyword + semantic) search",
+    annotations: READ_ONLY,
     description:
       "Use when a query carries both specific terms and an intent — you want exact-term precision without giving up " +
       "paraphrase recall. Fuses BM25 over a text column with vector similarity over the embedding column in a single " +
@@ -506,6 +726,10 @@ server.registerTool(
       k: z.number().int().positive().max(100).default(10).describe("Maximum results."),
       column: z.string().optional().describe("Text column for the keyword half; inferred if omitted."),
       vectorColumn: z.string().optional().describe("Vector column for the semantic half; inferred if omitted."),
+      mode: z
+        .enum(["or", "and"])
+        .optional()
+        .describe("Keyword half: match any query token ('or', the default) or require every token ('and')."),
       columns: z
         .array(z.string())
         .optional()
@@ -514,16 +738,18 @@ server.registerTool(
         ),
     },
   },
-  async ({ table, query, k, column, vectorColumn, columns }) => {
+  async ({ table, query, k, column, vectorColumn, mode, columns }) => {
     try {
       const handle = db.openTable(table);
       const textCol = column ?? inferTextColumn(handle);
       if (!textCol) return fail(`hybrid_search: no text column in '${table}' — pass 'column'.`);
       const vecCol = vectorColumn ?? inferVectorColumn(handle);
       if (!vecCol) return fail(`hybrid_search: no vector column in '${table}' — pass 'vectorColumn'.`);
+      await assertVectorWidth(handle, table, vecCol);
       const vector = await embed(query);
       const { value: results, tookMs } = timed(() =>
         handle.hybridSearch(textCol, query, vecCol, vector, k, {
+          mode,
           projection: searchProjection(columns, textCol),
         }),
       );
@@ -544,6 +770,7 @@ server.registerTool(
   "infino_token_match",
   {
     title: "Token match (unranked keyword filter)",
+    annotations: READ_ONLY,
     description:
       "Use when you need the SET of rows containing a keyword, not a ranked order — a fast unranked keyword filter. " +
       "Returns rows whose text column contains the token(s), matching indexed tokens and their stems. For ranked " +
@@ -582,6 +809,7 @@ server.registerTool(
   "infino_exact_match",
   {
     title: "Exact match (unranked exact filter)",
+    annotations: READ_ONLY,
     description:
       "Use to fetch rows whose column exactly equals a value — a tag, status, or id string. Unranked exact-equality " +
       "filter over an indexed column. For ranked text relevance use infino_keyword_search; for multi-column " +
@@ -616,6 +844,7 @@ server.registerTool(
   "infino_count",
   {
     title: "Count keyword matches",
+    annotations: READ_ONLY,
     description:
       "Use when you only need HOW MANY rows match a keyword query, not the rows themselves — a fast tally over a text " +
       "column, without fetching or ranking. Cheaper than infino_keyword_search when a number is all you need (e.g. " +
@@ -652,6 +881,7 @@ server.registerTool(
   "infino_sql",
   {
     title: "SQL over Infino",
+    annotations: DESTRUCTIVE,
     description:
       "Use for structural or analytical questions — counts, GROUP BY, joins, aggregates, filtering by column value — " +
       "returning result rows. The engine's search functions are callable as table-valued relations, so a single query " +
@@ -661,15 +891,9 @@ server.registerTool(
       "where the vector goes and pass embed:{\"name\":\"query text\"} — the server embeds the text and substitutes the " +
       "vector in. Example: SELECT path, SUM(end_line - start_line + 1) AS lines FROM " +
       "bm25_search('docs','body','error timeout', 300) GROUP BY path ORDER BY lines DESC. " +
-      (writesEnabled
-        ? "Any single statement is allowed (including DDL/DML), since INFINO_MCP_ENABLE_WRITES is set."
-        : "Read-only: a single SELECT / WITH statement; DDL/DML is rejected."),
+      "Any single statement is allowed, DDL/DML included.",
     inputSchema: {
-      query: writesEnabled
-        ? z.string().describe("A single SQL statement. May use search TVFs and {{name}} vector placeholders.")
-        : z
-            .string()
-            .describe("A single read-only SELECT or WITH statement. May use search TVFs and {{name}} vector placeholders."),
+      query: z.string().describe("A single SQL statement. May use search TVFs and {{name}} vector placeholders."),
       embed: z
         .record(z.string(), z.string())
         .optional()
@@ -683,7 +907,7 @@ server.registerTool(
   async ({ query, embed: embeds }) => {
     try {
       const sql = await applyEmbeds(query, embeds as Record<string, string> | undefined);
-      const { value: rows, tookMs } = timed(() => db.querySql(guardSql(sql, writesEnabled)));
+      const { value: rows, tookMs } = timed(() => db.querySql(guardSql(sql)));
       return ok({ rows, took_ms: tookMs });
     } catch (err) {
       return fail(`sql failed: ${errText(err)}`);
@@ -691,93 +915,99 @@ server.registerTool(
   },
 );
 
-// Write tool — registered only when writes are enabled, so a read-only install
-// never advertises it to the agent.
-if (writesEnabled) {
-  server.registerTool(
-    "infino_add_documents",
-    {
-      title: "Add documents to an Infino table",
-      description:
-        "Append documents (rows, as JSON objects keyed by column name) to a table — one call is one commit. " +
-        "If the table has a vector index and a document omits the vector, the server embeds its text column " +
-        "(a local model, no API key). Available only because INFINO_MCP_ENABLE_WRITES is set.",
-      inputSchema: {
-        table: z.string().describe("Table to append to."),
-        documents: z
-          .array(z.record(z.string(), z.any()))
-          .min(1)
-          .describe("Rows to append, as JSON objects keyed by column name."),
-      },
-    },
-    async ({ table, documents }) => {
-      try {
-        const handle = db.openTable(table);
-        const rows = await embedRows(handle, documents as Array<Record<string, unknown>>);
-        handle.append(rows);
-        return ok({ table, appended: rows.length });
-      } catch (err) {
-        return fail(`add_documents failed: ${errText(err)}`);
-      }
-    },
-  );
+// --- document writes ---------------------------------------------------------
 
-  server.registerTool(
-    "infino_update_documents",
-    {
-      title: "Update documents in an Infino table",
-      description:
-        "Replace the rows matching a SQL predicate with new documents, 1:1 — the number of matched rows must equal " +
-        "the number of replacement documents. As with add, a row that omits its vector has it embedded from the text " +
-        "column (local model, no API key). Requires durable storage (not memory://). Available only because " +
-        "INFINO_MCP_ENABLE_WRITES is set.",
-      inputSchema: {
-        table: z.string().describe("Table to update."),
-        predicate: z
-          .string()
-          .describe("SQL predicate selecting the rows to replace, e.g. \"status = 'draft'\"."),
-        documents: z
-          .array(z.record(z.string(), z.any()))
-          .min(1)
-          .describe("Replacement rows, as JSON objects keyed by column name (one per matched row)."),
-      },
+server.registerTool(
+  "infino_add_documents",
+  {
+    title: "Add documents to an Infino table",
+    annotations: ADDITIVE,
+    description:
+      "Append documents (rows, as JSON objects keyed by column name) to a table; one call is one commit. " +
+      "If the table has a vector index and a document omits the vector, the server embeds its text column " +
+      "(a local model, no API key). Send tens of rows per call; for a whole corpus use the infino CLI or an SDK.",
+    inputSchema: {
+      table: z.string().describe("Table to append to."),
+      documents: z
+        .array(z.record(z.string(), z.any()))
+        .min(1)
+        .describe("Rows to append, as JSON objects keyed by column name."),
     },
-    async ({ table, predicate, documents }) => {
-      try {
-        const handle = db.openTable(table);
-        const rows = await embedRows(handle, documents as Array<Record<string, unknown>>);
-        const stats = handle.update(predicate, rows);
-        return ok({ table, predicate, ...stats });
-      } catch (err) {
-        return fail(`update_documents failed: ${errText(err)}`);
-      }
-    },
-  );
+  },
+  async ({ table, documents }) => {
+    try {
+      const handle = db.openTable(table);
+      const { rows, embedded } = await prepareRows(handle, table, documents as Array<Record<string, unknown>>);
+      const { tookMs } = timed(() => handle.append(rows));
+      return ok({
+        table,
+        appended: rows.length,
+        embedded,
+        took_ms: tookMs,
+        verify: `infino_count or a search on '${table}' shows the new rows`,
+      });
+    } catch (err) {
+      return fail(`add_documents failed: ${errText(err, "write")}`);
+    }
+  },
+);
 
-  server.registerTool(
-    "infino_delete_documents",
-    {
-      title: "Delete documents from an Infino table",
-      description:
-        "Delete the rows matching a SQL predicate, e.g. \"status = 'spam'\". Returns how many rows matched and were " +
-        "removed. Requires durable storage (not memory://). Available only because INFINO_MCP_ENABLE_WRITES is set.",
-      inputSchema: {
-        table: z.string().describe("Table to delete from."),
-        predicate: z
-          .string()
-          .describe("SQL predicate selecting the rows to delete, e.g. \"status = 'spam'\"."),
-      },
+server.registerTool(
+  "infino_update_documents",
+  {
+    title: "Update documents in an Infino table",
+    annotations: DESTRUCTIVE,
+    description:
+      "Replace the rows matching a SQL predicate with new documents, 1:1; the number of matched rows must equal " +
+      "the number of replacement documents. As with add, a row that omits its vector has it embedded from the text " +
+      "column (local model, no API key). Requires durable storage (not memory://).",
+    inputSchema: {
+      table: z.string().describe("Table to update."),
+      predicate: z
+        .string()
+        .describe("SQL predicate selecting the rows to replace, e.g. \"status = 'draft'\"."),
+      documents: z
+        .array(z.record(z.string(), z.any()))
+        .min(1)
+        .describe("Replacement rows, as JSON objects keyed by column name (one per matched row)."),
     },
-    async ({ table, predicate }) => {
-      try {
-        const stats = db.openTable(table).delete(predicate);
-        return ok({ table, predicate, ...stats });
-      } catch (err) {
-        return fail(`delete_documents failed: ${errText(err)}`);
-      }
+  },
+  async ({ table, predicate, documents }) => {
+    try {
+      const handle = db.openTable(table);
+      const { rows, embedded } = await prepareRows(handle, table, documents as Array<Record<string, unknown>>);
+      const stats = handle.update(predicate, rows);
+      return ok({ table, predicate, ...stats, embedded });
+    } catch (err) {
+      return fail(`update_documents failed: ${errText(err, "write")}`);
+    }
+  },
+);
+
+server.registerTool(
+  "infino_delete_documents",
+  {
+    title: "Delete documents from an Infino table",
+    annotations: DESTRUCTIVE,
+    description:
+      "Delete the rows matching a SQL predicate, e.g. \"status = 'spam'\". Returns how many rows matched and were " +
+      "removed. Check the predicate first with infino_count or infino_sql. Requires durable storage (not memory://).",
+    inputSchema: {
+      table: z.string().describe("Table to delete from."),
+      predicate: z
+        .string()
+        .describe("SQL predicate selecting the rows to delete, e.g. \"status = 'spam'\"."),
     },
-  );
-}
+  },
+  async ({ table, predicate }) => {
+    try {
+      const stats = db.openTable(table).delete(predicate);
+      return ok({ table, predicate, ...stats });
+    } catch (err) {
+      return fail(`delete_documents failed: ${errText(err, "write")}`);
+    }
+  },
+);
 
 // --- transport -------------------------------------------------------------
 // stdio for desktop/CLI clients (Claude Desktop/Code, Cursor). Logs go to
@@ -787,5 +1017,5 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error(
   `infino MCP server ready on stdio (uri: ${uri}, mode: ${isHosted ? "hosted" : "embedded"}, ` +
-    `writes: ${writesEnabled ? "on" : "off"}, embedder: ${embedderInfo()})`,
+    `embedder: ${embedderInfo()})`,
 );
