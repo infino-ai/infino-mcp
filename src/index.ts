@@ -365,7 +365,8 @@ const server = new McpServer(
     instructions:
       "Infino is an embedded retrieval engine for data on object storage: full-text (BM25), vector, " +
       "hybrid, and SQL search over one copy of the data, in-process, with no separate server or managed " +
-      "service. These tools retrieve from a connected catalog of tables.\n\n" +
+      "service. Tables are stored as valid Parquet; DuckDB or pyarrow can read the same files. These tools " +
+      "retrieve from a connected catalog of tables.\n\n" +
       "Pick a tool by the question shape:\n" +
       "- infino_keyword_search — literal terms, identifiers, error codes, names (ranked BM25).\n" +
       "- infino_semantic_search — meaning or paraphrase when the exact wording is unknown; its optional " +
