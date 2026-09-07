@@ -36,9 +36,7 @@ const USE_REMOTE =
 
 const LOCAL_MODEL_DEFAULT = "Xenova/all-MiniLM-L6-v2";
 const REMOTE_MODEL_DEFAULT = "text-embedding-3-small";
-const MODEL =
-  process.env.INFINO_MCP_EMBED_MODEL ??
-  (USE_REMOTE ? REMOTE_MODEL_DEFAULT : LOCAL_MODEL_DEFAULT);
+const MODEL = process.env.INFINO_MCP_EMBED_MODEL ?? (USE_REMOTE ? REMOTE_MODEL_DEFAULT : LOCAL_MODEL_DEFAULT);
 
 // Batch sizes. The local pipeline runs one forward pass per call, so a batch
 // amortizes model overhead across texts without letting the ONNX arenas grow
@@ -64,9 +62,7 @@ function getPipe() {
 /** Embed up to REMOTE_BATCH texts in one OpenAI-compatible /embeddings call. */
 async function embedRemoteBatch(texts: string[]): Promise<number[][]> {
   if (!BASE_URL) {
-    throw new Error(
-      "INFINO_MCP_EMBED_BASE_URL is required when INFINO_MCP_EMBED_PROVIDER is 'openai'.",
-    );
+    throw new Error("INFINO_MCP_EMBED_BASE_URL is required when INFINO_MCP_EMBED_PROVIDER is 'openai'.");
   }
   const url = `${BASE_URL.replace(/\/$/, "")}/embeddings`;
   const headers: Record<string, string> = { "content-type": "application/json" };

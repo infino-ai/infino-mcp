@@ -1,0 +1,14 @@
+[
+  {
+    "id": "GHSA-xcpc-8h2w-3j85",
+    "package": "adm-zip",
+    "reason": "Reached only through onnxruntime-node's install script, which extracts the runtime archive it downloads from Microsoft's release CDN; no user data or network input ever reaches adm-zip at run time. Goes away when onnxruntime-node moves to adm-zip 0.6, or when the local embedder becomes an optional dependency.",
+    "expires": "2026-12-31"
+  },
+  {
+    "id": "GHSA-f88m-g3jw-g9cj",
+    "package": "sharp",
+    "reason": "sharp is pulled in by @huggingface/transformers for image pipelines. This server runs text feature-extraction only and never loads an image, so libvips is never invoked. Goes away when the local embedder becomes an optional dependency.",
+    "expires": "2026-12-31"
+  }
+]

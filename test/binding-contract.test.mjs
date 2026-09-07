@@ -137,9 +137,7 @@ test("querySql answers plain SQL over the catalog", () => {
 // infino_sql advertises the search table functions; make sure the composed
 // form the tool description documents keeps working.
 test("querySql composes with the bm25_search table function", () => {
-  const rows = db.querySql(
-    `SELECT content, score FROM bm25_search('${TABLE}', 'content', 'alpha', 10)`,
-  );
+  const rows = db.querySql(`SELECT content, score FROM bm25_search('${TABLE}', 'content', 'alpha', 10)`);
   assert.equal(rows.length, 2);
   assert.equal(typeof rows[0].score, "number");
 });

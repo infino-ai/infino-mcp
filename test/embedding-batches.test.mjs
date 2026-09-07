@@ -117,7 +117,10 @@ test("add_documents embeds all rows in one request, not one per row", async () =
   assert.equal(body.embedded, 50);
   const mine = requests.slice(seen);
   assert.equal(mine.length, 1, "one embeddings request for the whole batch");
-  assert.deepEqual(mine[0].body.input, documents.map((d) => d.body));
+  assert.deepEqual(
+    mine[0].body.input,
+    documents.map((d) => d.body),
+  );
   assert.equal(mine[0].body.model, "stub");
 });
 

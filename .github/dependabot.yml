@@ -22,6 +22,13 @@ updates:
     # actually tested, and makes the version legible in the diff.
     versioning-strategy: increase
     open-pull-requests-limit: 5
+    ignore:
+      # typescript-eslint's peer range stops short of TypeScript 7
+      # (">=4.8.4 <6.1.0" at 8.69), so the lint toolchain pins TypeScript to
+      # 6.x. Remove this entry the day typescript-eslint's peer range includes
+      # 7, then let the next grouped PR move both together.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       dependencies:
         patterns:
