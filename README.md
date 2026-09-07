@@ -38,7 +38,7 @@ An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com
 
 ## Requirements
 
-- **Node.js ≥ 18** (the server runs as a Node process over stdio).
+- **Node.js ≥ 20** (the server runs as a Node process over stdio).
 - **An MCP-compatible client** (Claude Code, Claude Desktop, Cursor, VS Code, …).
 - **Data reachable by Infino** — a local directory, a bucket with credentials available in the environment, or a hosted Infino Cloud endpoint with an API key (see [Storage backends](#storage-backends)).
 - On first run the server downloads the local embedding model (~90 MB) once and caches it; subsequent runs are offline for embedding.
