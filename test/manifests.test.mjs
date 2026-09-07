@@ -34,6 +34,15 @@ test("README environment table and server.json agree on the variables", () => {
   assert.deepEqual(readmeEnvVars(), registry);
 });
 
+// The MCP Registry rejects a server.json whose description or title exceeds
+// 100 characters (schema 2025-12-11, ServerDetail). The registry-manifest CI
+// job catches this too, but only with network; this fails on the laptop.
+test("server.json description and title fit the registry's 100-character limit", () => {
+  const server = json("server.json");
+  assert.ok(server.description.length <= 100, `description is ${server.description.length} chars`);
+  if (server.title) assert.ok(server.title.length <= 100, `title is ${server.title.length} chars`);
+});
+
 test("every INFINO_* variable smithery.yaml passes exists in server.json", () => {
   const registry = new Set(json("server.json").packages[0].environmentVariables.map((v) => v.name));
   const passed = [...read("smithery.yaml").matchAll(/\b(INFINO_[A-Z0-9_]+)\b/g)].map((m) => m[1]);
