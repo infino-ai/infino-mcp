@@ -158,7 +158,10 @@ test("infino_create_table builds the table with FTS on every large_utf8 column b
   const described = JSON.parse(
     (await client.callTool({ name: "infino_describe_table", arguments: { table: "notes" } })).content[0].text,
   );
-  assert.deepEqual(described.columns.map((c) => c.name), ["key", "body", "n"]);
+  assert.deepEqual(
+    described.columns.map((c) => c.name),
+    ["key", "body", "n"],
+  );
   assert.match(described.columns[0].type, /^Utf8/i);
   assert.match(described.columns[1].type, /LargeUtf8/i);
   assert.match(described.columns[2].type, /Int64/i);
@@ -196,8 +199,8 @@ test("infino_add_documents appends and the rows are searchable", async () => {
   assert.ok(!res.isError, res.content?.[0]?.text);
   assert.equal(JSON.parse(res.content[0].text).appended, 2);
   const count = JSON.parse(
-    (await client.callTool({ name: "infino_count", arguments: { table: "notes", query: "alpha" } })).content[0]
-      .text,
+    (await client.callTool({ name: "infino_count", arguments: { table: "notes", query: "alpha" } }))
+      .content[0].text,
   );
   assert.equal(count.count, 1);
 });
@@ -258,8 +261,8 @@ test("infino_delete_documents removes the row a key predicate selects", async ()
   assert.equal(stats.matched, 1);
   assert.equal(stats.nTombstoned, 1);
   const count = JSON.parse(
-    (await client.callTool({ name: "infino_count", arguments: { table: "notes", query: "alpha" } })).content[0]
-      .text,
+    (await client.callTool({ name: "infino_count", arguments: { table: "notes", query: "alpha" } }))
+      .content[0].text,
   );
   assert.equal(count.count, 0);
 });
