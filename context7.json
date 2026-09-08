@@ -1,0 +1,32 @@
+{
+  "projectTitle": "Infino MCP Server",
+  "description": "MCP server for Infino — keyword (BM25), semantic, hybrid, and SQL retrieval plus writes over your data on object storage or Infino Cloud, from Claude Code, Claude Desktop, Cursor, VS Code, or any MCP client.",
+  "url": "https://context7.com/infino-ai/infino-mcp",
+  "public_key": "pk_XhkDeKtd3HaW5jgwWAFUa",
+  "excludeFolders": [
+    "node_modules",
+    "**/node_modules",
+    "**/dist",
+    "test",
+    "scripts",
+    ".github"
+  ],
+  "rules": [
+    "The server is launched by the MCP client over stdio as 'npx -y @infino-ai/mcp-server'; never run it by hand in normal use. All configuration is environment variables — there are no config files and no command-line flags.",
+    "Claude Code: 'claude mcp add infino --scope user -e INFINO_MCP_URI=<path-or-uri> -- npx -y @infino-ai/mcp-server'. One-step plugin install: '/plugin marketplace add infino-ai/infino-mcp' then '/plugin install infino@infino-ai'.",
+    "INFINO_MCP_URI names the data to serve: a local path, an s3:// or az:// bucket URI, or a hosted https://<host>/<database> Infino Cloud endpoint. Unset, it defaults to the durable per-user directory ~/.infino/mcp.",
+    "A hosted https:// URI requires INFINO_API_KEY (an inf_ key from the Infino Cloud console); the database is the URI's last path segment. If the database answers 404, call infino_create_database once — it is idempotent and a no-op locally.",
+    "Storage credentials come from the environment: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY for S3 (set AWS_ENDPOINT_URL for R2, MinIO, or B2), AZURE_STORAGE_ACCOUNT / AZURE_STORAGE_KEY for Azure Blob. They are never logged or returned.",
+    "Embedding is local by default (transformers.js all-MiniLM-L6-v2, 384 dims, no key; a one-time ~90 MB download). Set INFINO_MCP_EMBED_PROVIDER=openai plus INFINO_MCP_EMBED_BASE_URL and INFINO_MCP_EMBED_API_KEY for an OpenAI-compatible endpoint.",
+    "Queries are embedded in this server even against a hosted table, so INFINO_MCP_EMBED_MODEL must match the model that produced the table's stored vectors; a dimension mismatch fails at search time.",
+    "Search tools: infino_semantic_search (meaning; score is a distance, lower is closer), infino_keyword_search (BM25; higher is better, mode 'or' or 'and'), infino_hybrid_search (BM25 + vector fused by reciprocal-rank fusion). Responses carry score_kind.",
+    "Unranked filters: infino_token_match (rows containing the tokens), infino_exact_match (equality on an indexed column), infino_count (tally of keyword matches without fetching rows). infino_list_tables and infino_describe_table inspect the catalog.",
+    "infino_sql runs one statement (DDL/DML included). The engine's search functions are SQL table functions, so one query can rank and aggregate; pass a vector via a {{name}} placeholder filled from the embed map, e.g. embed {\"q\": \"query text\"}.",
+    "The 'columns' argument on every search tool is a projection passed to the engine: any table column can come back per hit. It defaults to the text column, with _id and score always included; nothing is truncated — project fewer columns or lower k.",
+    "Writes are always available; there is no write gate and the retired INFINO_MCP_ENABLE_WRITES variable is ignored. On Infino Cloud a read-scoped API key is refused every write. Locally, point the server only at data the agent may change.",
+    "infino_create_table takes a {column: type} descriptor; 'fts' picks full-text columns (default: every large_utf8) and 'vector: true' adds an embedding column sized to the server's embedder with a cosine index — the agent never types a dimension.",
+    "infino_add_documents appends rows, one call = one commit; rows without a vector are embedded from the text column in one batch. infino_update_documents and infino_delete_documents take a SQL predicate and work on durable storage only.",
+    "A tool call carries tens of documents. For a whole corpus, ingest with the infino CLI ('infino ingest' takes Parquet or NDJSON against the same URI) or an SDK, then search it through the server.",
+    "Every tool carries MCP annotations (readOnlyHint, destructiveHint) so the client can confirm destructive calls. Logs go to stderr, never stdout, so they cannot corrupt the JSON-RPC stream."
+  ]
+}
