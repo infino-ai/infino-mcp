@@ -1,6 +1,6 @@
 {
   "name": "@infino-ai/mcp-server",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "MCP server for Infino — keyword, semantic, hybrid, and SQL retrieval for AI agents: RAG, persistent agent memory, and search over data stored as plain Parquet on object storage. Local embeddings, no API key.",
   "mcpName": "io.github.infino-ai/mcp-server",
   "license": "Apache-2.0",
