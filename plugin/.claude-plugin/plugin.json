@@ -1,7 +1,7 @@
 {
   "name": "infino",
   "displayName": "Infino",
-  "description": "Keyword, vector, hybrid, and SQL retrieval over data on object storage, for AI agents.",
+  "description": "Keyword, semantic, hybrid, and SQL retrieval for AI agents — RAG, persistent agent memory, and search over your own data, stored as plain Parquet on object storage. Local embeddings, no API key; point it at a path, a bucket, or Infino Cloud.",
   "version": "0.3.0",
   "author": {
     "name": "Infino",

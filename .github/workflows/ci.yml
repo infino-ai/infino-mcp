@@ -1,30 +1,106 @@
 name: CI
 
-# Build gate for pull requests and main. Publishing stays in publish.yml
-# (manual); this just proves the package compiles and packs cleanly.
+# The quality gate for pull requests and main. Four independent jobs feed one
+# summary job, `ci-ok`, which is the only check branch protection names, so the
+# matrix can change without touching the protection rule.
+#
+#   lint    eslint + prettier over src/, test/, scripts/; zero warnings.
+#   test    build, the suite, and a pack dry run on every Node line we claim
+#           (engines >= 20) and on both operating systems the binding ships
+#           binaries for. macOS is the only place the darwin binaries get
+#           loaded by a machine; publish.yml builds on Linux.
+#   guards  the registry manifest validates with the same tool publish.yml
+#           uses, so a broken server.json fails here and not at release time.
+#           (The README ↔ server.json drift checks are ordinary tests, so they
+#           run inside `test` on every cell.)
+#   audit   npm audit over production dependencies; high and critical fail
+#           unless .github/audit-allowlist.json names the advisory with a
+#           reason and an expiry (scripts/audit-gate.mjs).
+#
+# Actions are pinned to commit SHAs; the version each SHA corresponds to is in
+# the trailing comment. Dependabot's github-actions group moves both.
 
 on:
   pull_request:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  build:
-    name: Build & pack
+  lint:
+    name: Lint & format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+
+  test:
+    name: Test (node ${{ matrix.node }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
       - run: npm run build
-      # Behavioral gate: the binding-contract and server-boot tests exercise
-      # the engine surface this server uses, so a dependabot bump of
-      # @infino-ai/infino fails here if a release changes behavior, not just
-      # types.
+      # Behavioral gate: the binding-contract, server-boot, embedding, and
+      # manifest tests exercise the engine surface and the wire, so a
+      # dependabot bump of @infino-ai/infino fails here if a release changes
+      # behavior, not just types.
       - run: npm test
       # Same validation the publish workflow's dry run relies on: the tarball
       # assembles with the expected contents.
       - run: npm pack --dry-run
+
+  guards:
+    name: Registry manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate server.json with mcp-publisher
+        run: |
+          curl -sSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher validate
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run audit:gate
+
+  ci-ok:
+    name: CI
+    runs-on: ubuntu-latest
+    needs: [lint, test, guards, audit]
+    if: always()
+    steps:
+      - name: Every job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -Eq '"result": *"(failure|cancelled|skipped)"'; then
+            echo "a required job did not succeed" >&2
+            exit 1
+          fi

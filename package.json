@@ -1,7 +1,7 @@
 {
   "name": "@infino-ai/mcp-server",
   "version": "0.14.0",
-  "description": "MCP server for Infino — keyword, vector, hybrid, and SQL retrieval over data on object storage, for AI agents.",
+  "description": "MCP server for Infino — keyword, semantic, hybrid, and SQL retrieval for AI agents: RAG, persistent agent memory, and search over data stored as plain Parquet on object storage. Local embeddings, no API key.",
   "mcpName": "io.github.infino-ai/mcp-server",
   "license": "Apache-2.0",
   "homepage": "https://github.com/infino-ai/infino-mcp#readme",
@@ -26,7 +26,10 @@
     "agent-memory",
     "object-storage",
     "embeddings",
-    "ai"
+    "ai",
+    "parquet",
+    "s3",
+    "semantic-search"
   ],
   "type": "module",
   "bin": {
@@ -37,7 +40,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "publishConfig": {
     "access": "public"
@@ -47,16 +50,25 @@
     "watch": "tsc --watch",
     "start": "node dist/index.js",
     "pretest": "npm run build",
-    "test": "node --test"
+    "test": "node --test",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" eslint.config.js",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" eslint.config.js",
+    "audit:gate": "node scripts/audit-gate.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
-    "@infino-ai/infino": "^0.5.8",
+    "@infino-ai/infino": "^0.6.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^26",
-    "typescript": "^7"
+    "eslint": "^10.10.0",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.6",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.69.0"
   }
 }

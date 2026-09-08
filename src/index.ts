@@ -113,9 +113,7 @@ const apiKey = process.env.INFINO_API_KEY;
 
 // Opt into a connect-time probe so bad credentials or an unreachable bucket
 // fail at startup instead of on the first search.
-const validate = ["1", "true", "yes"].includes(
-  (process.env.INFINO_MCP_VALIDATE ?? "").toLowerCase(),
-);
+const validate = ["1", "true", "yes"].includes((process.env.INFINO_MCP_VALIDATE ?? "").toLowerCase());
 
 const connectOptions: ConnectOptions = {};
 if (isHosted) {
@@ -147,7 +145,6 @@ try {
   console.error(`Failed to connect to ${uri}: ${translate(err, { hosted: isHosted })}`);
   process.exit(1);
 }
-
 
 // Writes used to sit behind INFINO_MCP_ENABLE_WRITES. The variable is accepted
 // and ignored so an existing config keeps booting; it is never honored, because
@@ -244,9 +241,9 @@ const errText = (err: unknown, op?: "create" | "write") => translate(err, { op, 
 // the indexed one; plain Utf8 columns are typically ids and short labels.
 // Prefer LargeUtf8, fall back to the first Utf8. (An explicit `column`
 // always overrides.)
-function inferTextColumn(table: { schema(): { fields: Array<{ name: string; type: unknown }> } }):
-  | string
-  | undefined {
+function inferTextColumn(table: {
+  schema(): { fields: Array<{ name: string; type: unknown }> };
+}): string | undefined {
   const fields = table.schema().fields;
   const large = fields.find((f) => String(f.type).toLowerCase().includes("largeutf8"));
   if (large) return large.name;
@@ -255,9 +252,9 @@ function inferTextColumn(table: { schema(): { fields: Array<{ name: string; type
 }
 
 // The first list-typed column (the vector index lives on a FixedSizeList<float32>).
-function inferVectorColumn(table: { schema(): { fields: Array<{ name: string; type: unknown }> } }):
-  | string
-  | undefined {
+function inferVectorColumn(table: {
+  schema(): { fields: Array<{ name: string; type: unknown }> };
+}): string | undefined {
   const field = table.schema().fields.find((f) => String(f.type).toLowerCase().includes("list"));
   return field?.name;
 }
@@ -365,7 +362,8 @@ const server = new McpServer(
     instructions:
       "Infino is an embedded retrieval engine for data on object storage: full-text (BM25), vector, " +
       "hybrid, and SQL search over one copy of the data, in-process, with no separate server or managed " +
-      "service. These tools retrieve from a connected catalog of tables.\n\n" +
+      "service. Tables are stored as valid Parquet; DuckDB or pyarrow can read the same files. These tools " +
+      "retrieve from a connected catalog of tables.\n\n" +
       "Pick a tool by the question shape:\n" +
       "- infino_keyword_search — literal terms, identifiers, error codes, names (ranked BM25).\n" +
       "- infino_semantic_search — meaning or paraphrase when the exact wording is unknown; its optional " +
@@ -510,7 +508,10 @@ server.registerTool(
         vectorColumns.push(VECTOR_COLUMN);
       }
       const ftsColumns =
-        fts ?? Object.entries(columns).filter(([, t]) => t === "large_utf8").map(([n]) => n);
+        fts ??
+        Object.entries(columns)
+          .filter(([, t]) => t === "large_utf8")
+          .map(([n]) => n);
       for (const col of ftsColumns) {
         if (!(col in descriptor)) return fail(`create_table: fts column '${col}' is not in 'columns'.`);
         if (descriptor[col] !== "large_utf8") {
@@ -567,10 +568,7 @@ server.registerTool(
 // (e.g. a path + line range to cite), with `_id` and `score` always appended
 // so every hit keeps its id and ranking score. Defaults to the (searched)
 // text column plus `_id`/`score`.
-function searchProjection(
-  columns: string[] | undefined,
-  textCol: string | undefined,
-): string[] {
+function searchProjection(columns: string[] | undefined, textCol: string | undefined): string[] {
   const base = columns && columns.length > 0 ? columns : textCol ? [textCol] : [];
   return [...new Set([...base, "_id", "score"])];
 }
@@ -633,7 +631,9 @@ server.registerTool(
       await assertVectorWidth(handle, table, vecCol);
       const vector = await embed(query);
       const projection = searchProjection(columns, textCol);
-      const { value: results, tookMs } = timed(() => handle.vectorSearch(vecCol, vector, k, { projection, filter }));
+      const { value: results, tookMs } = timed(() =>
+        handle.vectorSearch(vecCol, vector, k, { projection, filter }),
+      );
       return ok({
         table,
         query,
@@ -725,7 +725,10 @@ server.registerTool(
       query: z.string().describe("Query text; matched as keyword terms AND embedded for vector similarity."),
       k: z.number().int().positive().max(100).default(10).describe("Maximum results."),
       column: z.string().optional().describe("Text column for the keyword half; inferred if omitted."),
-      vectorColumn: z.string().optional().describe("Vector column for the semantic half; inferred if omitted."),
+      vectorColumn: z
+        .string()
+        .optional()
+        .describe("Vector column for the semantic half; inferred if omitted."),
       mode: z
         .enum(["or", "and"])
         .optional()
@@ -797,8 +800,17 @@ server.registerTool(
       const handle = db.openTable(table);
       const col = column ?? inferTextColumn(handle);
       if (!col) return fail(`token_match: no text column in '${table}' — pass 'column'.`);
-      const { value: rows, tookMs } = timed(() => handle.tokenMatch(col, query, { mode, projection: [col, "_id"] }));
-      return ok({ table, column: col, query, matched: rows.length, results: rows.slice(0, limit), took_ms: tookMs });
+      const { value: rows, tookMs } = timed(() =>
+        handle.tokenMatch(col, query, { mode, projection: [col, "_id"] }),
+      );
+      return ok({
+        table,
+        column: col,
+        query,
+        matched: rows.length,
+        results: rows.slice(0, limit),
+        took_ms: tookMs,
+      });
     } catch (err) {
       return fail(`token_match failed: ${errText(err)}`);
     }
@@ -832,8 +844,17 @@ server.registerTool(
       const handle = db.openTable(table);
       const col = column ?? inferTextColumn(handle);
       if (!col) return fail(`exact_match: no column found in '${table}' — pass 'column'.`);
-      const { value: rows, tookMs } = timed(() => handle.exactMatch(col, value, { projection: [col, "_id"] }));
-      return ok({ table, column: col, value, matched: rows.length, results: rows.slice(0, limit), took_ms: tookMs });
+      const { value: rows, tookMs } = timed(() =>
+        handle.exactMatch(col, value, { projection: [col, "_id"] }),
+      );
+      return ok({
+        table,
+        column: col,
+        value,
+        matched: rows.length,
+        results: rows.slice(0, limit),
+        took_ms: tookMs,
+      });
     } catch (err) {
       return fail(`exact_match failed: ${errText(err)}`);
     }
@@ -888,12 +909,14 @@ server.registerTool(
       "can rank AND aggregate: bm25_search('table','text_col','terms', k) — also bm25_search_prefix / token_match / " +
       "exact_match — need no embedding. vector_search('table','vec_col', {{q}}, k) and " +
       "hybrid_search('table','text_col','terms','vec_col', {{q}}, k) need a query vector: put a {{name}} placeholder " +
-      "where the vector goes and pass embed:{\"name\":\"query text\"} — the server embeds the text and substitutes the " +
+      'where the vector goes and pass embed:{"name":"query text"} — the server embeds the text and substitutes the ' +
       "vector in. Example: SELECT path, SUM(end_line - start_line + 1) AS lines FROM " +
       "bm25_search('docs','body','error timeout', 300) GROUP BY path ORDER BY lines DESC. " +
       "Any single statement is allowed, DDL/DML included.",
     inputSchema: {
-      query: z.string().describe("A single SQL statement. May use search TVFs and {{name}} vector placeholders."),
+      query: z
+        .string()
+        .describe("A single SQL statement. May use search TVFs and {{name}} vector placeholders."),
       embed: z
         .record(z.string(), z.string())
         .optional()
@@ -937,7 +960,11 @@ server.registerTool(
   async ({ table, documents }) => {
     try {
       const handle = db.openTable(table);
-      const { rows, embedded } = await prepareRows(handle, table, documents as Array<Record<string, unknown>>);
+      const { rows, embedded } = await prepareRows(
+        handle,
+        table,
+        documents as Array<Record<string, unknown>>,
+      );
       const { tookMs } = timed(() => handle.append(rows));
       return ok({
         table,
@@ -975,7 +1002,11 @@ server.registerTool(
   async ({ table, predicate, documents }) => {
     try {
       const handle = db.openTable(table);
-      const { rows, embedded } = await prepareRows(handle, table, documents as Array<Record<string, unknown>>);
+      const { rows, embedded } = await prepareRows(
+        handle,
+        table,
+        documents as Array<Record<string, unknown>>,
+      );
       const stats = handle.update(predicate, rows);
       return ok({ table, predicate, ...stats, embedded });
     } catch (err) {
@@ -994,9 +1025,7 @@ server.registerTool(
       "removed. Check the predicate first with infino_count or infino_sql. Requires durable storage (not memory://).",
     inputSchema: {
       table: z.string().describe("Table to delete from."),
-      predicate: z
-        .string()
-        .describe("SQL predicate selecting the rows to delete, e.g. \"status = 'spam'\"."),
+      predicate: z.string().describe("SQL predicate selecting the rows to delete, e.g. \"status = 'spam'\"."),
     },
   },
   async ({ table, predicate }) => {

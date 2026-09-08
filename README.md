@@ -4,11 +4,12 @@
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.infino--ai%2Fmcp--server-blue)](https://registry.modelcontextprotocol.io/?search=io.github.infino-ai/mcp-server)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-green.svg)](./LICENSE)
 
-An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com/infino-ai/infino) — it lets an AI agent run **keyword**, **semantic**, **hybrid**, and **SQL** retrieval over your data on object storage, from any MCP-compatible client (Claude Code, Claude Desktop, Cursor, VS Code, and others). Published on npm as [`@infino-ai/mcp-server`](https://www.npmjs.com/package/@infino-ai/mcp-server) and listed on the [official MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.infino-ai/mcp-server` (which propagates to catalogs like Smithery, Glama, and PulseMCP).
+An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com/infino-ai/infino) — it lets an AI agent run **keyword**, **semantic**, **hybrid**, and **SQL** retrieval over your data on object storage — the retrieval layer for RAG, persistent agent memory, and search over your own files — from any MCP-compatible client (Claude Code, Claude Desktop, Cursor, VS Code, and others). Published on npm as [`@infino-ai/mcp-server`](https://www.npmjs.com/package/@infino-ai/mcp-server) and listed on the [official MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.infino-ai/mcp-server` (which propagates to catalogs like Smithery, Glama, and PulseMCP).
 
 - **Local embeddings, no key.** Semantic search embeds queries with a local model — nothing leaves the machine for embedding.
 - **The agent owns the data.** Every tool, writes included, is always available. On Infino Cloud the API key's capabilities decide what a connection may do; every tool carries MCP annotations so your client can ask before a destructive call.
 - **Local or hosted.** Point it at a local path, your own bucket (S3, Azure, or any S3-compatible store), or a hosted Infino Cloud endpoint with an API key.
+- **The index is a valid Parquet file.** A table stores the data and its search indexes in plain Parquet on the storage — open the same file with DuckDB or pyarrow. No export, no lock-in.
 
 ---
 
@@ -37,7 +38,7 @@ An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com
 
 ## Requirements
 
-- **Node.js ≥ 18** (the server runs as a Node process over stdio).
+- **Node.js ≥ 20** (the server runs as a Node process over stdio).
 - **An MCP-compatible client** (Claude Code, Claude Desktop, Cursor, VS Code, …).
 - **Data reachable by Infino** — a local directory, a bucket with credentials available in the environment, or a hosted Infino Cloud endpoint with an API key (see [Storage backends](#storage-backends)).
 - On first run the server downloads the local embedding model (~90 MB) once and caches it; subsequent runs are offline for embedding.
