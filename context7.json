@@ -1,6 +1,6 @@
 {
   "projectTitle": "Infino MCP Server",
-  "description": "MCP server for Infino — keyword (BM25), semantic, hybrid, and SQL retrieval plus writes over your data on object storage or Infino Cloud, from Claude Code, Claude Desktop, Cursor, VS Code, or any MCP client.",
+  "description": "MCP server for Infino — keyword (BM25), semantic, hybrid, and SQL retrieval plus writes over your data on object storage or Infino Cloud, from Claude Code, Cursor, VS Code, or any MCP client.",
   "url": "https://context7.com/infino-ai/infino-mcp",
   "public_key": "pk_XhkDeKtd3HaW5jgwWAFUa",
   "excludeFolders": [
