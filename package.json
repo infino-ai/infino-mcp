@@ -60,7 +60,7 @@
     "@huggingface/transformers": "^4.2.0",
     "@infino-ai/infino": "^0.6.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "zod": "^4.5.4"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -69,6 +69,6 @@
     "globals": "^17.12.0",
     "prettier": "^3.9.6",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.69.0"
+    "typescript-eslint": "^8.70.0"
   }
 }
