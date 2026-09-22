@@ -80,6 +80,26 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
+      # The MCP Registry validates a submission by fetching the exact version
+      # from npm's public read endpoint, which lags a publish by a minute or
+      # more: 0.15.0 was published at 09:37:11 and first served at 09:38:46,
+      # and the registry step two seconds after the publish got a 404 and
+      # refused the listing. Wait until npm serves the version before
+      # registering it. Bounded, so a real publish failure still surfaces.
+      - name: Wait for npm to serve the published version
+        if: ${{ !inputs.dry_run }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          for attempt in $(seq 1 30); do
+            if curl -sf -o /dev/null "https://registry.npmjs.org/@infino-ai%2Fmcp-server/$VERSION"; then
+              echo "npm serves @infino-ai/mcp-server@$VERSION"
+              exit 0
+            fi
+            echo "not visible yet ($attempt/30); waiting 10s"
+            sleep 10
+          done
+          echo "::error::npm still does not serve @infino-ai/mcp-server@$VERSION after 5 minutes"
+          exit 1
 
       # --- stage 2: MCP Registry ---
       # Keep server.json's versions in lockstep with the package version so the
