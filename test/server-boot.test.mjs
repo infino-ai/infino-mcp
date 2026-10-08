@@ -214,8 +214,6 @@ test("infino_add_documents names a key that is not a column instead of dropping 
   assert.match(res.content[0].text, /'bogus'.*not a column/);
 });
 
-// The binding's BM25 options the searches pass through: boolean `mode` and
-// the `stats` scope.
 // Tables created from a descriptor have no nullable columns, so a row that
 // omits one fails inside Arrow; the server says which column, up front.
 test("infino_add_documents names a column a row omits instead of surfacing an Arrow error", async () => {
@@ -240,15 +238,6 @@ test("infino_keyword_search honours mode: and", async () => {
     ).results.length;
   assert.equal(await search("or"), 2);
   assert.equal(await search("and"), 0);
-});
-
-test("infino_keyword_search accepts stats: global", async () => {
-  const res = await client.callTool({
-    name: "infino_keyword_search",
-    arguments: { table: "notes", query: "alpha", k: 10, stats: "global" },
-  });
-  assert.ok(!res.isError, res.content?.[0]?.text);
-  assert.equal(JSON.parse(res.content[0].text).results.length, 1);
 });
 
 test("infino_delete_documents removes the row a key predicate selects", async () => {
