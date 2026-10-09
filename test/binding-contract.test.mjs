@@ -177,9 +177,10 @@ test("createTable accepts a {column: type} descriptor with a sized vector column
   );
   // The server sizes and checks vector columns through `listSize`.
   assert.equal(fields[3].type.listSize, DIM);
-  // int64 columns take BigInt, which is why the server widens JSON numbers.
-  assert.throws(() => t.append([{ key: "a", body: "x", n: 1, embedding: unit(0) }]), /BigInt/);
+  // int64 columns take the integer JSON numbers the server passes through as-is.
+  assert.doesNotThrow(() => t.append([{ key: "a", body: "x", n: 1, embedding: unit(0) }]));
   assert.doesNotThrow(() => t.append([{ key: "a", body: "x", n: 1n, embedding: unit(0) }]));
+  assert.throws(() => t.append([{ key: "a", body: "x", n: 1.5, embedding: unit(0) }]), /TypeMismatch/);
 });
 
 test("dropTable removes the table from listTables", () => {

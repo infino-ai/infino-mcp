@@ -671,12 +671,6 @@ server.registerTool(
         .enum(["or", "and"])
         .optional()
         .describe("Match any query token ('or', the default) or require every token ('and')."),
-      stats: z
-        .enum(["per_superfile", "global"])
-        .optional()
-        .describe(
-          "BM25 statistics scope: 'per_superfile' (the default; each segment scored against its own statistics) or 'global' (one table-wide idf, so a table written in many small batches ranks like one corpus).",
-        ),
       columns: z
         .array(z.string())
         .optional()
@@ -685,7 +679,7 @@ server.registerTool(
         ),
     },
   },
-  async ({ table, query, k, column, mode, stats, columns }) => {
+  async ({ table, query, k, column, mode, columns }) => {
     try {
       const handle = db.openTable(table);
       const col = column ?? inferTextColumn(handle);
@@ -693,7 +687,7 @@ server.registerTool(
         return fail(`keyword_search: no text column found in '${table}' — pass 'column' explicitly.`);
       }
       const { value: results, tookMs } = timed(() =>
-        handle.bm25Search(col, query, k, { mode, stats, projection: searchProjection(columns, col) }),
+        handle.bm25Search(col, query, k, { mode, projection: searchProjection(columns, col) }),
       );
       return ok({
         table,
