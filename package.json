@@ -57,18 +57,18 @@
     "audit:gate": "node scripts/audit-gate.mjs"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
+    "@huggingface/transformers": "^4.3.1",
     "@infino-ai/infino": "^0.11.1",
-    "@modelcontextprotocol/sdk": "^1.32.0",
-    "zod": "^4.6.5"
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26",
     "eslint": "^10.12.0",
     "globals": "^17.13.0",
-    "prettier": "^3.9.9",
+    "prettier": "^3.9.10",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.71.0"
+    "typescript-eslint": "^8.71.1"
   }
 }
