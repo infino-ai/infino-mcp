@@ -1057,7 +1057,9 @@ if (agentApi) {
   try {
     agentTools = await agentApi.agentApisEnabled();
   } catch (err) {
-    console.error(`Could not ask whether this account has the agent tools (${agentErr(err)}); serving without them.`);
+    console.error(
+      `Could not ask whether this account has the agent tools (${agentErr(err)}); serving without them.`,
+    );
   }
 }
 
@@ -1115,11 +1117,7 @@ if (agentApi && agentTools) {
         "found on the other, and `predicate`, the ON clause ready to paste into infino_sql. Call it before " +
         "writing a statement across tables.",
       inputSchema: {
-        tables: z
-          .array(z.string().min(1))
-          .min(2)
-          .max(8)
-          .describe("The tables the statement will span."),
+        tables: z.array(z.string().min(1)).min(2).max(8).describe("The tables the statement will span."),
       },
     },
     async ({ tables }) => {
@@ -1168,7 +1166,9 @@ if (agentApi && agentTools) {
         context: z
           .string()
           .optional()
-          .describe("Anything the agent should know beside the question (a convention, a definition); not checked for."),
+          .describe(
+            "Anything the agent should know beside the question (a convention, a definition); not checked for.",
+          ),
         maxWallSecs: z
           .number()
           .int()

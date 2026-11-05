@@ -102,7 +102,11 @@ test("join_keys posts the tables, and a refusal keeps the service's words", asyn
 test("an ask sends only the fields given, with the budget under the service's name", async () => {
   const { calls, fetchImpl } = recordingFetch(200, { facts: [], statement: "SELECT 1" });
   const api = new AgentApi(ENDPOINT, "inf_key", fetchImpl);
-  await api.ask({ question: "how many accounts are paying?", tables: ["accounts", "plans"], maxWallSecs: 60 });
+  await api.ask({
+    question: "how many accounts are paying?",
+    tables: ["accounts", "plans"],
+    maxWallSecs: 60,
+  });
   assert.equal(calls[0].url, "https://svc/v1/sub_agent/logs");
   assert.deepEqual(JSON.parse(calls[0].init.body), {
     question: "how many accounts are paying?",
@@ -154,7 +158,11 @@ async function standIn(features) {
         return send(200, { joins: [{ predicate: "a.id = b.a_id" }] });
       }
       if (req.url === "/v1/sub_agent/catalog") {
-        return send(200, { facts: [{ table: "a", row: { id: 1 } }], statement: "SELECT id FROM a", coverage: { rows_total: 1 } });
+        return send(200, {
+          facts: [{ table: "a", row: { id: 1 } }],
+          statement: "SELECT id FROM a",
+          coverage: { rows_total: 1 },
+        });
       }
       send(404, { error: `no route ${req.url}` });
     });
@@ -202,14 +210,20 @@ test("an account with the agent routes on gets the agent tools, and they reach t
   assert.ok(!joined.isError, joined.content[0].text);
   assert.equal(JSON.parse(joined.content[0].text).joins[0].predicate, "a.id = b.a_id");
 
-  const answered = await client.callTool({ name: "infino_ask", arguments: { question: "which ids?", table: "a" } });
+  const answered = await client.callTool({
+    name: "infino_ask",
+    arguments: { question: "which ids?", table: "a" },
+  });
   assert.ok(!answered.isError, answered.content[0].text);
   assert.equal(JSON.parse(answered.content[0].text).statement, "SELECT id FROM a");
   const askCall = svc.seen.find((r) => r.url === "/v1/sub_agent/catalog");
   assert.deepEqual(JSON.parse(askCall.body), { question: "which ids?", table: "a" });
 
   const asked = svc.seen.filter((r) => r.url !== "/v1/account/features");
-  assert.ok(asked.every((r) => r.auth === "Bearer inf_test"), "every call carries the key");
+  assert.ok(
+    asked.every((r) => r.auth === "Bearer inf_test"),
+    "every call carries the key",
+  );
 });
 
 for (const [why, features] of [
