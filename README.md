@@ -295,6 +295,16 @@ Search hits return **full column values** — the `columns` argument is a projec
 
 For plain retrieval prefer the dedicated search tools, which embed and project for you. `infino_sql` is for filters, joins, and aggregates, including over a search table function's results, so one query can rank and aggregate at once.
 
+### Agent tools (Infino Cloud)
+
+On a hosted connection, the server asks Infino Cloud once at startup whether the account has the agent tools switched on (`GET /v1/account/features`). When it does, three more tools appear; otherwise, and on every local or bucket connection, they are not offered at all.
+
+| Tool | Arguments | What it does |
+| --- | --- | --- |
+| `infino_describe_columns` | `table`, `pattern`, `limit?` | A table's column entries from the card Infino Cloud computed from the table itself: type, index role, rows with a value, distinct count, range and most frequent values. `pattern` is a column name or a `*` pattern (`property_*`, `*monthly*`). For wide tables, call it before a statement names a column. |
+| `infino_join_keys` | `tables` (2 to 8) | The keys the tables join on, found on their values rather than by column name, each with its `predicate`, the `ON` clause to paste into `infino_sql`. |
+| `infino_ask` | `question`, `table?`, `tables?`, `k?`, `context?`, `maxWallSecs?` | A plain-language question answered by a retrieval agent on Infino Cloud, which runs the searches and SQL itself and returns the rows it found (`facts`), the statement whose rows answer the question (`statement`) and `coverage`, never a summary. Each ask runs a model loop billed to the account and takes seconds to a few minutes; when you already know the statement, use `infino_sql`. |
+
 ### Writing data
 
 The write path an agent follows, each step one tool call and one commit:
