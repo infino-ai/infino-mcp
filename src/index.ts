@@ -36,7 +36,14 @@ import { z } from "zod";
 import { connect, IndexSpec, type ConnectOptions } from "@infino-ai/infino";
 import { embed, embedMany, embedderDim, embedderInfo } from "./embedding.js";
 import { errText as translate, guardSql } from "./guards.js";
-import { AgentApi, AgentApiError, hostedEndpoint } from "./agent-api.js";
+import {
+  AgentApi,
+  AgentApiError,
+  hostedEndpoint,
+  searchedTextColumn,
+  validationUnavailable,
+} from "./agent-api.js";
+import { joinGate, joinRefusal, withoutComments, type Join } from "./join-gate.js";
 
 // --- connection (env-configured, opened once at startup) -------------------
 //
@@ -900,6 +907,65 @@ server.registerTool(
   },
 );
 
+// --- Infino Cloud: the account's features, asked once at startup -------------
+//
+// Asked before the tools are registered, so the tool list a client sees is
+// fixed for the session. Any failure to ask reads as off: the binding's tools
+// still serve, and the reason goes to stderr.
+
+// The service's own words for a refusal on a route the binding does not wrap:
+// errText's readings are for the binding's data routes, where a 403 means a
+// key without write.
+const agentErr = (err: unknown) => (err instanceof AgentApiError ? err.message : errText(err));
+
+const endpoint = isHosted ? hostedEndpoint(uri) : null;
+const agentApi = endpoint && apiKey ? new AgentApi(endpoint, apiKey) : null;
+let agentTools = false;
+if (agentApi) {
+  try {
+    agentTools = await agentApi.agentApisEnabled();
+  } catch (err) {
+    console.error(
+      `Could not ask whether this account has the agent tools (${agentErr(err)}); serving without them.`,
+    );
+  }
+}
+
+// The database's tables, for the join check: listed at most once a minute,
+// since a statement may name a table created a moment ago.
+const TABLES_TTL_MS = 60_000;
+let tablesListed: { at: number; names: string[] } | null = null;
+function knownTables(): string[] {
+  if (!tablesListed || performance.now() - tablesListed.at > TABLES_TTL_MS) {
+    tablesListed = { at: performance.now(), names: db.listTables() };
+  }
+  return tablesListed.names;
+}
+
+// The service's keys among a set of tables, asked for once per set for the
+// server's life. A service that cannot answer leaves the statement unchecked
+// rather than unrun - the check is a guard, not a precondition - and says so
+// on stderr.
+const keysAsked = new Map<string, Promise<Join[]>>();
+function keysAmong(tables: string[]): Promise<Join[]> {
+  const set = [...tables].sort().join(",");
+  let pending = keysAsked.get(set);
+  if (!pending) {
+    pending = agentApi!
+      .joinKeys(tables)
+      .then((record) =>
+        ((record.joins as Join[] | undefined) ?? []).filter((j) => typeof j?.predicate === "string"),
+      )
+      .catch((err) => {
+        console.error(`join_keys for ${set} failed; the statement runs unchecked: ${agentErr(err)}`);
+        keysAsked.delete(set);
+        return [] as Join[];
+      });
+    keysAsked.set(set, pending);
+  }
+  return pending;
+}
+
 server.registerTool(
   "infino_sql",
   {
@@ -914,7 +980,17 @@ server.registerTool(
       'where the vector goes and pass embed:{"name":"query text"} — the server embeds the text and substitutes the ' +
       "vector in. Example: SELECT path, SUM(end_line - start_line + 1) AS lines FROM " +
       "bm25_search('docs','body','error timeout', 300) GROUP BY path ORDER BY lines DESC. " +
-      "Any single statement is allowed, DDL/DML included.",
+      "Any single statement is allowed, DDL/DML included." +
+      (agentApi
+        ? " On Infino Cloud a query that searches a text column has its rows checked against `question`: the " +
+          "result's `validation` says whether they answer it, and what the column holds nowhere if not. A GROUP BY " +
+          "over a search function with a k under 300 is refused, since its totals rank a share of the top k rather " +
+          "than the table."
+        : "") +
+      (agentTools
+        ? " A statement that joins tables must join them on a key infino_join_keys found; one that does not is " +
+          "refused with the keys."
+        : ""),
     inputSchema: {
       query: z
         .string()
@@ -927,12 +1003,42 @@ server.registerTool(
             "is substituted for every {{name}} in the query — required to use vector_search / hybrid_search. " +
             'E.g. {"q":"error timeout"} fills {{q}}.',
         ),
+      ...(agentApi
+        ? {
+            question: z
+              .string()
+              .optional()
+              .describe(
+                "The question these rows are meant to answer, in the words it was asked. Used only to check the " +
+                  "rows against it; put nothing else here.",
+              ),
+          }
+        : {}),
     },
   },
-  async ({ query, embed: embeds }) => {
+  async ({ query, embed: embeds, question }) => {
     try {
-      const sql = await applyEmbeds(query, embeds as Record<string, string> | undefined);
-      const { value: rows, tookMs } = timed(() => db.querySql(guardSql(sql)));
+      const sql = guardSql(await applyEmbeds(query, embeds as Record<string, string> | undefined));
+      const code = withoutComments(sql);
+      if (agentApi && agentTools) {
+        const verdict = await joinGate(code, knownTables(), keysAmong);
+        if (verdict.kind === "refuse") return fail(joinRefusal("sql", verdict));
+      }
+      const searched = agentApi ? searchedTextColumn(code) : null;
+      if (agentApi && searched) {
+        const t0 = performance.now();
+        try {
+          const { rows, validation } = await agentApi.querySqlValidated(sql, {
+            ...searched,
+            ...(question ? { question } : {}),
+          });
+          return ok({ rows, validation, took_ms: Math.round((performance.now() - t0) * 1000) / 1000 });
+        } catch (err) {
+          if (!validationUnavailable(err)) return fail(`sql failed: ${agentErr(err)}`);
+          // A deployment that cannot check results runs the query unchecked.
+        }
+      }
+      const { value: rows, tookMs } = timed(() => db.querySql(sql));
       return ok({ rows, took_ms: tookMs });
     } catch (err) {
       return fail(`sql failed: ${errText(err)}`);
@@ -1041,27 +1147,6 @@ server.registerTool(
 );
 
 // --- agent tools (Infino Cloud accounts with the agent routes on) ----------
-//
-// Asked once at startup, so the tool list a client sees is fixed for the
-// session. Any failure to ask reads as off: the binding's tools still serve,
-// and the reason goes to stderr.
-
-// The service's own words for an agent route's refusal: errText's readings are
-// for the binding's data routes, where a 403 means a key without write.
-const agentErr = (err: unknown) => (err instanceof AgentApiError ? err.message : errText(err));
-
-const endpoint = isHosted ? hostedEndpoint(uri) : null;
-const agentApi = endpoint && apiKey ? new AgentApi(endpoint, apiKey) : null;
-let agentTools = false;
-if (agentApi) {
-  try {
-    agentTools = await agentApi.agentApisEnabled();
-  } catch (err) {
-    console.error(
-      `Could not ask whether this account has the agent tools (${agentErr(err)}); serving without them.`,
-    );
-  }
-}
 
 if (agentApi && agentTools) {
   server.registerTool(

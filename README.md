@@ -7,7 +7,7 @@
 An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com/infino-ai/infino) — it lets an AI agent run **keyword**, **semantic**, **hybrid**, and **SQL** retrieval over your data on object storage — the retrieval layer for RAG, persistent agent memory, and search over your own files — from any MCP-compatible client (Claude Code, Claude Desktop, Cursor, VS Code, and others). Published on npm as [`@infino-ai/mcp-server`](https://www.npmjs.com/package/@infino-ai/mcp-server) and listed on the [official MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.infino-ai/mcp-server` (which propagates to catalogs like Smithery, Glama, and PulseMCP).
 
 - **Local embeddings, no key.** Semantic search embeds queries with a local model — nothing leaves the machine for embedding.
-- **The agent owns the data.** Every tool, writes included, is always available. On Infino Cloud the API key's capabilities decide what a connection may do; every tool carries MCP annotations so your client can ask before a destructive call.
+- **The agent owns the data.** Every data tool, writes included, is always available. On Infino Cloud the API key's capabilities decide what a connection may do; every tool carries MCP annotations so your client can ask before a destructive call.
 - **Local or hosted.** Point it at a local path, your own bucket (S3, Azure, or any S3-compatible store), or a hosted Infino Cloud endpoint with an API key.
 - **The index is a valid Parquet file.** A table stores the data and its search indexes in plain Parquet on the storage — open the same file with DuckDB or pyarrow. No export, no lock-in.
 
@@ -281,7 +281,7 @@ the data.
 | `infino_token_match` | `table`, `query`, `column?`, `mode?`, `limit?` | Unranked keyword filter — the set of rows whose text column contains the token(s). Use when you need the matches, not a relevance order. |
 | `infino_exact_match` | `table`, `value`, `column?`, `limit?` | Unranked exact-equality filter over an indexed column (tag, status, id string). |
 | `infino_count` | `table`, `query`, `column?`, `mode?` | Count how many rows match a keyword query, without fetching them — a fast tally over the text column. For the matching rows use `infino_keyword_search` or `infino_token_match`. |
-| `infino_sql` | `query`, `embed?` | SQL for counts, filters, joins, aggregates. The engine's search table functions are callable inside it; a `{{name}}` placeholder is filled with the vector of `embed[name]`. Any single statement, DDL/DML included. |
+| `infino_sql` | `query`, `embed?`, `question?` | SQL for counts, filters, joins, aggregates. The engine's search table functions are callable inside it; a `{{name}}` placeholder is filled with the vector of `embed[name]`. Any single statement, DDL/DML included. On Infino Cloud, see [Checked SQL](#checked-sql-infino-cloud). |
 | `infino_list_tables` | — | List the tables in the connected catalog. |
 | `infino_describe_table` | `table` | Column names and types for a table. |
 | `infino_create_database` | — | Provision the database the connection names (Infino Cloud); a no-op success locally. Idempotent. |
@@ -294,6 +294,12 @@ the data.
 Search hits return **full column values** — the `columns` argument is a projection passed straight to the engine (embedded or hosted), so any column in the table can come back with each hit: `["id"]` for compact hits at a large `k`, `["id", "text"]` for the full text alongside an id to cite, metadata columns for filtering. It defaults to the text column, with `_id` and `score` always included, and nothing is ever truncated; to keep results small, project fewer columns or ask for a smaller `k`. Every search response also carries `score_kind`, stating whether its `score` is a distance (semantic: lower is closer) or a relevance (keyword and hybrid: higher is better).
 
 For plain retrieval prefer the dedicated search tools, which embed and project for you. `infino_sql` is for filters, joins, and aggregates, including over a search table function's results, so one query can rank and aggregate at once.
+
+### Checked SQL (Infino Cloud)
+
+On a hosted connection, a read whose statement runs a text search (`bm25_search`, `bm25_search_prefix`, `hybrid_search`, `token_match` or `exact_match`) is sent to Infino Cloud with a check of its rows. The result carries `validation` beside the rows: whether they answer `question`, and, when they do not, the question's terms the searched column holds nowhere, so the agent knows no query will find them. A `GROUP BY` over a search function with a `k` under 300 is refused before it runs, because its totals rank a share of the top `k` rather than the table. The check's engine work is metered with the query. Statements without a text search, writes, and local or bucket connections run as before.
+
+On an account with the agent tools on, a statement that joins tables is also held to the keys `infino_join_keys` finds on their values: one that joins them on other columns is refused, and the refusal names the keys to rewrite it on.
 
 ### Agent tools (Infino Cloud)
 

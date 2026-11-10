@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright The Infino Authors
 //
-// The Infino Cloud routes the binding does not wrap: the account's switched-on
-// features, and the agent routes an account reaches only when its agent APIs
-// are switched on (a table's card, the keys tables join on). Called over plain
+// The Infino Cloud routes and options the binding does not wrap: the
+// account's switched-on features, a SQL query checked against its question,
+// and the agent routes an account reaches only when its agent APIs are
+// switched on (a table's card, the keys tables join on). Called over plain
 // HTTPS with the same API key the binding uses, and only on a hosted
 // connection; an embedded catalog has none of these.
 
@@ -79,6 +80,46 @@ const CALL_TIMEOUT_MS = 120_000;
  * service is slow to answer, and a check that times out reads as off. */
 const FEATURES_TIMEOUT_MS = 10_000;
 
+/** What a SQL result is checked against: the question, and the
+ * full-text-indexed column of the table the statement searched, where the
+ * question's terms are looked up when the rows do not answer it. */
+export interface SqlValidation {
+  table: string;
+  column: string;
+  question?: string;
+}
+
+/** A checked SQL result: the rows, and the service's verdict beside them. */
+export interface ValidatedRows {
+  rows: unknown[];
+  validation: Record<string, unknown>;
+}
+
+/** The search functions whose second argument is a full-text-indexed column:
+ * the ones a result can be checked against. `vector_search` searches a
+ * vector column and has none. */
+const TEXT_SEARCH_CALL =
+  /\b(?:bm25_search_prefix|bm25_search|hybrid_search|token_match|exact_match)\s*\(\s*'([^']+)'\s*,\s*'([^']+)'/i;
+
+/** The table and text column the first text search in a read-only statement
+ * runs over, or `null` when it runs none (or writes): what its result is
+ * checked against. */
+export function searchedTextColumn(sql: string): { table: string; column: string } | null {
+  if (!/^\s*(?:select|with)\b/i.test(sql)) return null;
+  const m = TEXT_SEARCH_CALL.exec(sql);
+  return m ? { table: m[1], column: m[2] } : null;
+}
+
+/** The service's words when its workers cannot check a result: the query is
+ * then sent again without the check. */
+const VALIDATION_UNAVAILABLE = "validation is not available on this deployment";
+
+/** Whether `err` says the deployment cannot check results, as opposed to a
+ * refusal of the statement itself. */
+export function validationUnavailable(err: unknown): boolean {
+  return err instanceof AgentApiError && err.status === 400 && err.message.includes(VALIDATION_UNAVAILABLE);
+}
+
 /** Options for a table card read as a column lookup. */
 export interface ColumnLookup {
   pattern: string;
@@ -106,6 +147,20 @@ export class AgentApi {
     });
     if (response === null) return false;
     return (response as { agent_apis?: unknown }).agent_apis === true;
+  }
+
+  /** Run `sql` and have the service check its rows against the question:
+   * any account may ask, and the check's engine work is metered with the
+   * query. A GROUP BY over a search function's small top k is refused before
+   * it runs (a 400 naming the shapes that rank the whole table). */
+  async querySqlValidated(sql: string, validation: SqlValidation): Promise<ValidatedRows> {
+    const validate: Record<string, string> = { table_name: validation.table, field_name: validation.column };
+    if (validation.question !== undefined) validate.question = validation.question;
+    const result = (await this.request("query_sql", this.dataUrl("query_sql"), {
+      method: "POST",
+      body: JSON.stringify({ query: sql, validate }),
+    })) as Partial<ValidatedRows>;
+    return { rows: Array.isArray(result.rows) ? result.rows : [], validation: result.validation ?? {} };
   }
 
   /** The column entries of `table`'s card whose names match `pattern`, most
