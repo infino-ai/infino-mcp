@@ -9,7 +9,7 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +36,13 @@ before(async () => {
 after(async () => {
   await client.close();
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("server reports the package's own version on initialize", () => {
+  const { version } = JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"),
+  );
+  assert.deepEqual(client.getServerVersion(), { name: "infino", version });
 });
 
 // The full surface, always: one tool per binding operation, no write gate.
