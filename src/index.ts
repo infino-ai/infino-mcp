@@ -14,7 +14,14 @@
 // invented here; bulk ingestion, chunking, and upsert live in the CLI, the
 // SDKs, or the engine.
 //
-// The full surface is always advertised. Who may write is decided by the
+// One deliberate exception: on Infino Cloud, an account can have the agent
+// routes switched on, which describe a table, find the keys tables join on,
+// and answer a question with the service's own retrieval loop. Those are not
+// binding operations, so they are called over HTTPS (see agent-api.ts), and
+// their tools are offered only on a hosted connection whose account has them
+// on, checked once at startup. Everywhere else they do not appear.
+//
+// The binding's surface is always advertised. Who may write is decided by the
 // hosted API key's capabilities (a read-scoped key gets 403 on writes) and by
 // whoever configured the local path or bucket credentials; how much a client
 // confirms before a destructive call is the client's decision, driven by the
@@ -29,6 +36,7 @@ import { z } from "zod";
 import { connect, IndexSpec, type ConnectOptions } from "@infino-ai/infino";
 import { embed, embedMany, embedderDim, embedderInfo } from "./embedding.js";
 import { errText as translate, guardSql } from "./guards.js";
+import { AgentApi, AgentApiError, hostedEndpoint } from "./agent-api.js";
 
 // --- connection (env-configured, opened once at startup) -------------------
 //
@@ -1032,6 +1040,154 @@ server.registerTool(
   },
 );
 
+// --- agent tools (Infino Cloud accounts with the agent routes on) ----------
+//
+// Asked once at startup, so the tool list a client sees is fixed for the
+// session. Any failure to ask reads as off: the binding's tools still serve,
+// and the reason goes to stderr.
+
+// The service's own words for an agent route's refusal: errText's readings are
+// for the binding's data routes, where a 403 means a key without write.
+const agentErr = (err: unknown) => (err instanceof AgentApiError ? err.message : errText(err));
+
+const endpoint = isHosted ? hostedEndpoint(uri) : null;
+const agentApi = endpoint && apiKey ? new AgentApi(endpoint, apiKey) : null;
+let agentTools = false;
+if (agentApi) {
+  try {
+    agentTools = await agentApi.agentApisEnabled();
+  } catch (err) {
+    console.error(
+      `Could not ask whether this account has the agent tools (${agentErr(err)}); serving without them.`,
+    );
+  }
+}
+
+if (agentApi && agentTools) {
+  server.registerTool(
+    "infino_describe_columns",
+    {
+      title: "A table's column entries, by name or name family",
+      annotations: READ_ONLY,
+      description:
+        "List a table's column entries from its card, as Infino Cloud last computed them from the table itself: " +
+        "type, index role, rows with a value, distinct count, range and most frequent values. A wide table has " +
+        "more columns than infino_describe_table usefully shows; call this with a column's name, or a family " +
+        "prefix such as `property_*`, before a statement names one of them. Returns how many columns matched " +
+        "and the first 40 by rows with a value, or `limit` of them.",
+      inputSchema: {
+        table: z.string().min(1).describe("The table to describe."),
+        pattern: z
+          .string()
+          .min(1)
+          .describe(
+            "A column name, matched whole; `*` matches any run of characters, for a prefix (`property_*`) " +
+              "or a word anywhere in the name (`*monthly*`); or `*` for every column. Case does not matter.",
+          ),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Entries to list, most rows with a value first (default 40)."),
+      },
+    },
+    async ({ table, pattern, limit }) => {
+      try {
+        const record = await agentApi.describeColumns(table, { pattern, limit });
+        const card = (record.card ?? record) as { schema?: unknown };
+        const columns = Array.isArray(card.schema) ? card.schema : [];
+        const matched = typeof record.matched === "number" ? record.matched : columns.length;
+        return ok({ table, pattern, matched, listed: columns.length, columns });
+      } catch (err) {
+        return fail(`describe_columns failed: ${agentErr(err)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "infino_join_keys",
+    {
+      title: "The keys two or more tables join on, found on their values",
+      annotations: READ_ONLY,
+      description:
+        "The keys the named tables join on, found by Infino Cloud on the tables' values, never by matching " +
+        "column names: which columns hold each other's values, and through which expression where they meet " +
+        "only through one. Each join comes back with its two sides, the share of the referencing side's values " +
+        "found on the other, and `predicate`, the ON clause ready to paste into infino_sql. Call it before " +
+        "writing a statement across tables.",
+      inputSchema: {
+        tables: z.array(z.string().min(1)).min(2).max(8).describe("The tables the statement will span."),
+      },
+    },
+    async ({ tables }) => {
+      try {
+        return ok(await agentApi.joinKeys(tables));
+      } catch (err) {
+        return fail(`join_keys failed: ${agentErr(err)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "infino_ask",
+    {
+      title: "Ask a question of the data: one retrieval, the rows back",
+      annotations: READ_ONLY,
+      description:
+        "Ask a question about this database in plain language. A retrieval agent on Infino Cloud reads the " +
+        "tables' cards, chooses and runs the searches and SQL itself (joins included), checks the result " +
+        "against the question, and returns the rows it found (`facts`), the statement whose rows answer the " +
+        "question (`statement`), and how many rows that statement returned (`coverage`). It never writes a " +
+        "summary: read the rows, and reuse `statement` with infino_sql to go further. Use it for any question " +
+        "that is not one statement you already know how to write: where a value lives, which column holds a " +
+        "name, counts and rankings across tables. Several asks in one reply run at the same time. When the " +
+        "database holds several tables and the question is about one or a few, name them in `table` or " +
+        "`tables`. Each ask runs a model loop on the service: it takes seconds to a few minutes and its model " +
+        "calls are billed to the account, so when you already know the statement, run it with infino_sql " +
+        "instead. A loop that found no answer still returns, with `terminate` saying why; if an ask comes back " +
+        "thin, rephrase it, narrower or broader, and ask again.",
+      inputSchema: {
+        question: z
+          .string()
+          .min(1)
+          .describe(
+            "The question, about the data, in plain language. Its names, numbers and quoted terms are what " +
+              "the result is checked for, so put only the question here.",
+          ),
+        table: z.string().min(1).optional().describe("The one table the question is about."),
+        tables: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(8)
+          .optional()
+          .describe("The few tables the question is about, which the agent may join."),
+        k: z.number().int().min(1).max(1000).optional().describe("Rows to return at most (default 10)."),
+        context: z
+          .string()
+          .optional()
+          .describe(
+            "Anything the agent should know beside the question (a convention, a definition); not checked for.",
+          ),
+        maxWallSecs: z
+          .number()
+          .int()
+          .min(10)
+          .max(600)
+          .optional()
+          .describe("A shorter time budget in seconds than the service's own, for a cheaper, faster ask."),
+      },
+    },
+    async (request) => {
+      try {
+        return ok(await agentApi.ask(request));
+      } catch (err) {
+        return fail(`ask failed: ${agentErr(err)}`);
+      }
+    },
+  );
+}
+
 // --- transport -------------------------------------------------------------
 // stdio for desktop/CLI clients (Claude Desktop/Code, Cursor). Logs go to
 // stderr so they never corrupt the JSON-RPC stream on stdout.
@@ -1040,5 +1196,5 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error(
   `infino MCP server ready on stdio (uri: ${uri}, mode: ${isHosted ? "hosted" : "embedded"}, ` +
-    `embedder: ${embedderInfo()})`,
+    `embedder: ${embedderInfo()}, agent tools: ${agentTools ? "on" : "off"})`,
 );
