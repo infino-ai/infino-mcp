@@ -27,7 +27,7 @@
 // confirms before a destructive call is the client's decision, driven by the
 // tool annotations below. There is no server-side write gate.
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -371,8 +371,14 @@ async function embedRows(
 // Server-level instructions are returned to the client on initialize and shown
 // to the model — the highest-leverage place to position Infino and steer which
 // tool fires when. Kept factual and answer-first (no keyword stuffing).
+// The version a client is told is the package's own: package.json ships in the
+// npm tarball beside dist/.
+const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+  version: string;
+};
+
 const server = new McpServer(
-  { name: "infino", version: "0.1.0" },
+  { name: "infino", version },
   {
     instructions:
       "Infino is an embedded retrieval engine for data on object storage: full-text (BM25), vector, " +
