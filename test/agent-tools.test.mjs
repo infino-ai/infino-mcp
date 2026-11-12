@@ -171,14 +171,17 @@ async function standIn(features) {
   return { seen, server, uri: `http://127.0.0.1:${server.address().port}/catalog` };
 }
 
-async function serve(features) {
+async function serve(features, env = {}) {
   const svc = await standIn(features);
   const client = new Client({ name: "agent-tools", version: "0.0.0" });
+  // The test decides the opt-in, never the shell it runs in.
+  const parent = { ...process.env };
+  delete parent.INFINO_MCP_ASK;
   await client.connect(
     new StdioClientTransport({
       command: process.execPath,
       args: [SERVER],
-      env: { ...process.env, INFINO_MCP_URI: svc.uri, INFINO_API_KEY: "inf_test" },
+      env: { ...parent, INFINO_MCP_URI: svc.uri, INFINO_API_KEY: "inf_test", ...env },
       stderr: "ignore",
     }),
   );
@@ -192,7 +195,7 @@ async function serve(features) {
 const names = async (client) => (await client.listTools()).tools.map((t) => t.name);
 
 test("an account with the agent routes on gets the agent tools, and they reach the service", async () => {
-  const { client, svc } = await serve({ agent_apis: true });
+  const { client, svc } = await serve({ agent_apis: true }, { INFINO_MCP_ASK: "1" });
   const listed = await names(client);
   for (const tool of AGENT_TOOLS) assert.ok(listed.includes(tool), `missing ${tool}`);
   assert.ok(listed.includes("infino_sql"), "the binding's tools are still there");
@@ -226,13 +229,23 @@ test("an account with the agent routes on gets the agent tools, and they reach t
   );
 });
 
+for (const value of [undefined, "0", "no"]) {
+  test(`ask is not offered without INFINO_MCP_ASK (${value ?? "unset"}), the other agent tools are`, async () => {
+    const { client } = await serve({ agent_apis: true }, value === undefined ? {} : { INFINO_MCP_ASK: value });
+    const listed = await names(client);
+    assert.ok(listed.includes("infino_describe_columns"));
+    assert.ok(listed.includes("infino_join_keys"));
+    assert.ok(!listed.includes("infino_ask"), "infino_ask offered without the opt-in");
+  });
+}
+
 for (const [why, features] of [
   ["the account has them switched off", { agent_apis: false }],
   ["the service has no features route (404)", 404],
   ["the features check fails (500)", 500],
 ]) {
-  test(`no agent tools when ${why}`, async () => {
-    const { client } = await serve(features);
+  test(`no agent tools when ${why}, even with ask asked for`, async () => {
+    const { client } = await serve(features, { INFINO_MCP_ASK: "1" });
     const listed = await names(client);
     for (const tool of AGENT_TOOLS) assert.ok(!listed.includes(tool), `${tool} offered when ${why}`);
     assert.ok(listed.includes("infino_sql"), "the server still serves the binding's tools");

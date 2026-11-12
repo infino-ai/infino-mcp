@@ -130,6 +130,10 @@ const apiKey = process.env.INFINO_API_KEY;
 // fail at startup instead of on the first search.
 const validate = ["1", "true", "yes"].includes((process.env.INFINO_MCP_VALIDATE ?? "").toLowerCase());
 
+// infino_ask runs a model loop billed to the account, so it is offered only
+// when asked for, and only on an account with the agent tools on.
+const askTool = ["1", "true", "yes"].includes((process.env.INFINO_MCP_ASK ?? "").toLowerCase());
+
 const connectOptions: ConnectOptions = {};
 if (isHosted) {
   // Hosted (Infino Cloud): authenticate with the API key; the platform owns the
@@ -1220,63 +1224,65 @@ if (agentApi && agentTools) {
     },
   );
 
-  server.registerTool(
-    "infino_ask",
-    {
-      title: "Ask a question of the data: one retrieval, the rows back",
-      annotations: READ_ONLY,
-      description:
-        "Ask a question about this database in plain language. A retrieval agent on Infino Cloud reads the " +
-        "tables' cards, chooses and runs the searches and SQL itself (joins included), checks the result " +
-        "against the question, and returns the rows it found (`facts`), the statement whose rows answer the " +
-        "question (`statement`), and how many rows that statement returned (`coverage`). It never writes a " +
-        "summary: read the rows, and reuse `statement` with infino_sql to go further. Use it for any question " +
-        "that is not one statement you already know how to write: where a value lives, which column holds a " +
-        "name, counts and rankings across tables. Several asks in one reply run at the same time. When the " +
-        "database holds several tables and the question is about one or a few, name them in `table` or " +
-        "`tables`. Each ask runs a model loop on the service: it takes seconds to a few minutes and its model " +
-        "calls are billed to the account, so when you already know the statement, run it with infino_sql " +
-        "instead. A loop that found no answer still returns, with `terminate` saying why; if an ask comes back " +
-        "thin, rephrase it, narrower or broader, and ask again.",
-      inputSchema: {
-        question: z
-          .string()
-          .min(1)
-          .describe(
-            "The question, about the data, in plain language. Its names, numbers and quoted terms are what " +
-              "the result is checked for, so put only the question here.",
-          ),
-        table: z.string().min(1).optional().describe("The one table the question is about."),
-        tables: z
-          .array(z.string().min(1))
-          .min(1)
-          .max(8)
-          .optional()
-          .describe("The few tables the question is about, which the agent may join."),
-        k: z.number().int().min(1).max(1000).optional().describe("Rows to return at most (default 10)."),
-        context: z
-          .string()
-          .optional()
-          .describe(
-            "Anything the agent should know beside the question (a convention, a definition); not checked for.",
-          ),
-        maxWallSecs: z
-          .number()
-          .int()
-          .min(10)
-          .max(600)
-          .optional()
-          .describe("A shorter time budget in seconds than the service's own, for a cheaper, faster ask."),
+  if (askTool) {
+    server.registerTool(
+      "infino_ask",
+      {
+        title: "Ask a question of the data: one retrieval, the rows back",
+        annotations: READ_ONLY,
+        description:
+          "Ask a question about this database in plain language. A retrieval agent on Infino Cloud reads the " +
+          "tables' cards, chooses and runs the searches and SQL itself (joins included), checks the result " +
+          "against the question, and returns the rows it found (`facts`), the statement whose rows answer the " +
+          "question (`statement`), and how many rows that statement returned (`coverage`). It never writes a " +
+          "summary: read the rows, and reuse `statement` with infino_sql to go further. Use it for any question " +
+          "that is not one statement you already know how to write: where a value lives, which column holds a " +
+          "name, counts and rankings across tables. Several asks in one reply run at the same time. When the " +
+          "database holds several tables and the question is about one or a few, name them in `table` or " +
+          "`tables`. Each ask runs a model loop on the service: it takes seconds to a few minutes and its model " +
+          "calls are billed to the account, so when you already know the statement, run it with infino_sql " +
+          "instead. A loop that found no answer still returns, with `terminate` saying why; if an ask comes back " +
+          "thin, rephrase it, narrower or broader, and ask again.",
+        inputSchema: {
+          question: z
+            .string()
+            .min(1)
+            .describe(
+              "The question, about the data, in plain language. Its names, numbers and quoted terms are what " +
+                "the result is checked for, so put only the question here.",
+            ),
+          table: z.string().min(1).optional().describe("The one table the question is about."),
+          tables: z
+            .array(z.string().min(1))
+            .min(1)
+            .max(8)
+            .optional()
+            .describe("The few tables the question is about, which the agent may join."),
+          k: z.number().int().min(1).max(1000).optional().describe("Rows to return at most (default 10)."),
+          context: z
+            .string()
+            .optional()
+            .describe(
+              "Anything the agent should know beside the question (a convention, a definition); not checked for.",
+            ),
+          maxWallSecs: z
+            .number()
+            .int()
+            .min(10)
+            .max(600)
+            .optional()
+            .describe("A shorter time budget in seconds than the service's own, for a cheaper, faster ask."),
+        },
       },
-    },
-    async (request) => {
-      try {
-        return ok(await agentApi.ask(request));
-      } catch (err) {
-        return fail(`ask failed: ${agentErr(err)}`);
-      }
-    },
-  );
+      async (request) => {
+        try {
+          return ok(await agentApi.ask(request));
+        } catch (err) {
+          return fail(`ask failed: ${agentErr(err)}`);
+        }
+      },
+    );
+  }
 }
 
 // --- transport -------------------------------------------------------------
@@ -1287,5 +1293,6 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error(
   `infino MCP server ready on stdio (uri: ${uri}, mode: ${isHosted ? "hosted" : "embedded"}, ` +
-    `embedder: ${embedderInfo()}, agent tools: ${agentTools ? "on" : "off"})`,
+    `embedder: ${embedderInfo()}, agent tools: ${agentTools ? "on" : "off"}, ` +
+    `ask: ${agentTools && askTool ? "on" : "off"})`,
 );

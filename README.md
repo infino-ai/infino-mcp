@@ -201,6 +201,7 @@ All configuration is via environment variables — there are no config files and
 | `INFINO_MCP_EMBED_API_KEY` | No | — | API key for the `openai` provider. Sent as both `Authorization: Bearer` and `api-key`, so one value works for OpenAI and Azure OpenAI. Omit to call an unauthenticated or ambient-identity endpoint. |
 | `INFINO_MCP_EMBED_MODEL` | No | `Xenova/all-MiniLM-L6-v2` (local) · `text-embedding-3-small` (openai) | The embedding model. For `local`, a Hugging Face feature-extraction model; for `openai`, the model/deployment name. **Must match the model that produced the table's stored vectors** — and therefore its vector-index dimension (e.g. `text-embedding-3-small` is 1536-dim; the default local model is 384-dim). |
 | `INFINO_MCP_VALIDATE` | No | _off_ | When set (`1`/`true`/`yes`), probes the object store at startup so bad credentials or an unreachable bucket fail then instead of on the first search. |
+| `INFINO_MCP_ASK` | No | _off_ | When set (`1`/`true`/`yes`), offers `infino_ask` on an Infino Cloud account with the agent tools on. Each ask runs a model loop billed to the account. |
 
 Cloud credentials are read from the standard provider environment variables — the server maps them to the store's config and introduces no credential vars of its own. Omit them entirely to use ambient cloud identity (an IAM instance role or Azure managed identity).
 
@@ -303,13 +304,13 @@ On an account with the agent tools on, a statement that joins tables is also hel
 
 ### Agent tools (Infino Cloud)
 
-On a hosted connection, the server asks Infino Cloud once at startup whether the account has the agent tools switched on (`GET /v1/account/features`). When it does, three more tools appear; otherwise, and on every local or bucket connection, they are not offered at all.
+On a hosted connection, the server asks Infino Cloud once at startup whether the account has the agent tools switched on (`GET /v1/account/features`). When it does, `infino_describe_columns` and `infino_join_keys` appear, and `infino_ask` too when `INFINO_MCP_ASK` is set; otherwise, and on every local or bucket connection, they are not offered at all.
 
 | Tool | Arguments | What it does |
 | --- | --- | --- |
 | `infino_describe_columns` | `table`, `pattern`, `limit?` | A table's column entries from the card Infino Cloud computed from the table itself: type, index role, rows with a value, distinct count, range and most frequent values. `pattern` is a column name or a `*` pattern (`property_*`, `*monthly*`). For wide tables, call it before a statement names a column. |
 | `infino_join_keys` | `tables` (2 to 8) | The keys the tables join on, found on their values rather than by column name, each with its `predicate`, the `ON` clause to paste into `infino_sql`. |
-| `infino_ask` | `question`, `table?`, `tables?`, `k?`, `context?`, `maxWallSecs?` | A plain-language question answered by a retrieval agent on Infino Cloud, which runs the searches and SQL itself and returns the rows it found (`facts`), the statement whose rows answer the question (`statement`) and `coverage`, never a summary. Each ask runs a model loop billed to the account and takes seconds to a few minutes; when you already know the statement, use `infino_sql`. |
+| `infino_ask` (with `INFINO_MCP_ASK`) | `question`, `table?`, `tables?`, `k?`, `context?`, `maxWallSecs?` | A plain-language question answered by a retrieval agent on Infino Cloud, which runs the searches and SQL itself and returns the rows it found (`facts`), the statement whose rows answer the question (`statement`) and `coverage`, never a summary. Each ask runs a model loop billed to the account and takes seconds to a few minutes; when you already know the statement, use `infino_sql`. |
 
 ### Writing data
 
