@@ -57,6 +57,12 @@
           "description": "Set (1/true/yes) to probe the object store at startup, so bad credentials or an unreachable bucket fail then instead of on the first search.",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "INFINO_MCP_ASK",
+          "description": "Set (1/true/yes) to offer infino_ask on an Infino Cloud account with the agent tools on. Each ask runs a model loop billed to the account.",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }
