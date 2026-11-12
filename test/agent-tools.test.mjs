@@ -231,7 +231,10 @@ test("an account with the agent routes on gets the agent tools, and they reach t
 
 for (const value of [undefined, "0", "no"]) {
   test(`ask is not offered without INFINO_MCP_ASK (${value ?? "unset"}), the other agent tools are`, async () => {
-    const { client } = await serve({ agent_apis: true }, value === undefined ? {} : { INFINO_MCP_ASK: value });
+    const { client } = await serve(
+      { agent_apis: true },
+      value === undefined ? {} : { INFINO_MCP_ASK: value },
+    );
     const listed = await names(client);
     assert.ok(listed.includes("infino_describe_columns"));
     assert.ok(listed.includes("infino_join_keys"));
