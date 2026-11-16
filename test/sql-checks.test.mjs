@@ -62,6 +62,54 @@ test("statements that join nothing run without asking for keys", async () => {
   assert.equal(asked, 0);
 });
 
+test("a key written between subqueries and CTEs, each over one table, is the tables' key", async () => {
+  // Each table grouped by its key in a subquery, then the two joined on it.
+  const grouped =
+    "SELECT v.id, v.n, e.events FROM (SELECT id, count(*) AS n FROM visitors GROUP BY id) v " +
+    "LEFT JOIN (SELECT visitor_id, count(*) AS events FROM events GROUP BY visitor_id) e " +
+    "ON e.visitor_id = v.id ORDER BY v.n DESC LIMIT 40";
+  assert.equal((await joinGate(grouped, KNOWN, keys)).kind, "run");
+  for (const sql of [
+    "WITH v AS (SELECT id FROM visitors), e AS (SELECT visitor_id FROM events) SELECT count(*) FROM v JOIN e ON e.visitor_id = v.id",
+    "WITH recent AS (SELECT * FROM events WHERE ts > 0) SELECT r.visitor_id FROM visitors s JOIN recent r ON r.visitor_id = s.id",
+  ]) {
+    assert.equal((await joinGate(sql, KNOWN, keys)).kind, "run", sql);
+  }
+  // On another pair of columns, the subqueries are refused as the tables are.
+  const off = grouped.replace("ON e.visitor_id = v.id", "ON e.events = v.n");
+  assert.equal((await joinGate(off, KNOWN, keys)).kind, "refuse");
+});
+
+test("a column renamed inside a subquery or CTE is not read as the table's key", async () => {
+  // Wrapping an off-key join in a subquery that renames a column does not
+  // get it past the gate: the plain form is refused, and so is this.
+  for (const sql of [
+    "SELECT v.n FROM (SELECT account AS id, count(*) AS n FROM visitors GROUP BY account) v " +
+      "JOIN (SELECT visitor_id FROM events) e ON e.visitor_id = v.id",
+    "WITH e AS (SELECT account AS visitor_id FROM events) SELECT count(*) FROM e JOIN visitors v ON e.visitor_id = v.id",
+    "WITH e AS (SELECT account AS visitor_id FROM events) SELECT count(*) FROM e x JOIN visitors v ON x.visitor_id = v.id",
+  ]) {
+    assert.equal((await joinGate(sql, KNOWN, keys)).kind, "refuse", sql);
+  }
+  // The column carried as itself, as `*`, or as `x AS x` still reads as the table's.
+  for (const sql of [
+    "SELECT x.id FROM (SELECT v.id FROM visitors v) x JOIN events e ON e.visitor_id = x.id",
+    "SELECT x.id FROM (SELECT * FROM visitors) x JOIN events e ON e.visitor_id = x.id",
+    "WITH e AS (SELECT visitor_id AS visitor_id FROM events) SELECT count(*) FROM e JOIN visitors v ON e.visitor_id = v.id",
+  ]) {
+    assert.equal((await joinGate(sql, KNOWN, keys)).kind, "run", sql);
+  }
+});
+
+test("a subquery over two tables stands for neither", async () => {
+  // The join inside is held to the key on its own; an outer join on the
+  // subquery's columns names no table the check can hold it to.
+  const inner = "SELECT x.id FROM (SELECT v.id FROM visitors v JOIN events e ON e.visitor_id = v.id) x";
+  assert.equal((await joinGate(inner, KNOWN, keys)).kind, "run");
+  const innerOff = inner.replace("ON e.visitor_id = v.id", "ON e.account = v.account");
+  assert.equal((await joinGate(innerOff, KNOWN, keys)).kind, "refuse");
+});
+
 test("a subquery over another table is a join", () => {
   assert.ok(joinsTables("SELECT * FROM events WHERE visitor_id IN (SELECT id FROM visitors)", KNOWN));
 });
