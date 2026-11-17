@@ -58,17 +58,17 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.2",
-    "@infino-ai/infino": "^0.11.24",
+    "@infino-ai/infino": "^0.11.27",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26",
-    "eslint": "^10.14.0",
+    "eslint": "^10.15.0",
     "globals": "^17.14.0",
-    "prettier": "^3.9.10",
+    "prettier": "^3.10.1",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.72.1"
+    "typescript-eslint": "^8.72.2"
   }
 }
