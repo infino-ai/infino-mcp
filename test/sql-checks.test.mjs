@@ -101,6 +101,33 @@ test("a column renamed inside a subquery or CTE is not read as the table's key",
   }
 });
 
+test("a renamed column inside a key written as an expression is not read as the table's key", async () => {
+  // The service may return a key whose side is an expression. A derived
+  // name that renames the column inside that expression is held to the key
+  // like any other: the column need not sit next to the `=`.
+  const expressionKeys = async () => [
+    { from_table: "events", to_table: "visitors", predicate: "lower(events.visitor_id) = visitors.id" },
+  ];
+  const renamed =
+    "SELECT count(*) FROM (SELECT account AS visitor_id FROM events) e JOIN visitors v ON lower(e.visitor_id) = v.id";
+  assert.equal((await joinGate(renamed, KNOWN, expressionKeys)).kind, "refuse");
+  // In a WHERE, and through a CTE, the same.
+  for (const sql of [
+    "SELECT count(*) FROM (SELECT account AS visitor_id FROM events) e, visitors v WHERE lower(e.visitor_id) = v.id",
+    "WITH e AS (SELECT account AS visitor_id FROM events) SELECT count(*) FROM e JOIN visitors v ON lower(e.visitor_id) = v.id",
+  ]) {
+    assert.equal((await joinGate(sql, KNOWN, expressionKeys)).kind, "refuse", sql);
+  }
+  // The column carried as itself still reads as the table's, and a renamed
+  // column only selected or sorted on changes nothing.
+  for (const sql of [
+    "SELECT count(*) FROM (SELECT visitor_id FROM events) e JOIN visitors v ON lower(e.visitor_id) = v.id",
+    "SELECT e.n FROM (SELECT visitor_id, count(*) AS n FROM events GROUP BY visitor_id) e JOIN visitors v ON lower(e.visitor_id) = v.id ORDER BY e.n",
+  ]) {
+    assert.equal((await joinGate(sql, KNOWN, expressionKeys)).kind, "run", sql);
+  }
+});
+
 test("a subquery over two tables stands for neither", async () => {
   // The join inside is held to the key on its own; an outer join on the
   // subquery's columns names no table the check can hold it to.
