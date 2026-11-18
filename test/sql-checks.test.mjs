@@ -128,6 +128,28 @@ test("a renamed column inside a key written as an expression is not read as the 
   }
 });
 
+test("a derived name is judged column by column: a join on a carried key runs", async () => {
+  // The key's column is carried as itself; the other column the statement
+  // filters or joins on is computed or renamed inside, which says nothing
+  // about the key.
+  const expressionKeys = async () => [
+    { from_table: "events", to_table: "visitors", predicate: "lower(events.visitor_id) = visitors.id" },
+  ];
+  for (const sql of [
+    "SELECT count(*) FROM (SELECT visitor_id, lower(url) AS page FROM events) e JOIN visitors v ON lower(e.visitor_id) = v.id WHERE e.page LIKE '%pricing%'",
+    "SELECT count(*) FROM (SELECT visitor_id, length(url) AS size FROM events) e JOIN visitors v ON lower(e.visitor_id) = v.id WHERE e.size = 0",
+    "WITH e AS (SELECT visitor_id, count(*) AS n FROM events GROUP BY visitor_id) SELECT count(*) FROM e JOIN visitors v ON lower(e.visitor_id) = v.id WHERE e.n > 1",
+    "SELECT count(*) FROM (SELECT visitor_id, account AS name FROM events) e JOIN visitors v ON lower(e.visitor_id) = v.id AND e.name = v.name",
+  ]) {
+    assert.equal((await joinGate(sql, KNOWN, expressionKeys)).kind, "run", sql);
+  }
+  // A renamed column stays off the key when the derived name is the
+  // table's own name, where it would otherwise read as the table's column.
+  const shadowed =
+    "SELECT count(*) FROM (SELECT account AS visitor_id FROM events) events JOIN visitors v ON lower(events.visitor_id) = v.id";
+  assert.equal((await joinGate(shadowed, KNOWN, expressionKeys)).kind, "refuse");
+});
+
 test("a subquery over two tables stands for neither", async () => {
   // The join inside is held to the key on its own; an outer join on the
   // subquery's columns names no table the check can hold it to.
