@@ -9,7 +9,7 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -132,6 +132,36 @@ test("the retired writes flag changes nothing and is called out on stderr", asyn
     assert.match(stderr, /INFINO_MCP_ENABLE_WRITES .*no longer read/);
   } finally {
     await flagged.close();
+  }
+});
+
+// A plugin's optional setting left blank reaches the server as an empty
+// INFINO_MCP_URI (and INFINO_API_KEY). Blank must mean the default per-user
+// directory, exactly as if the variable were unset. HOME points at a scratch
+// directory so the default lands there and not in the real home directory.
+test("a blank INFINO_MCP_URI falls back to the per-user default", async () => {
+  const home = mkdtempSync(join(tmpdir(), "infino-mcp-home-"));
+  const blank = new Client({ name: "boot-smoke-blank", version: "0.0.0" });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER],
+    env: { ...process.env, HOME: home, USERPROFILE: home, INFINO_MCP_URI: "", INFINO_API_KEY: "" },
+    stderr: "pipe",
+  });
+  let stderr = "";
+  transport.stderr.on("data", (chunk) => (stderr += chunk));
+  await blank.connect(transport);
+  try {
+    const res = await blank.callTool({ name: "infino_list_tables", arguments: {} });
+    assert.ok(!res.isError);
+    assert.deepEqual(JSON.parse(res.content[0].text).tables, []);
+    const expected = join(home, ".infino", "mcp");
+    assert.ok(existsSync(expected), `default directory ${expected} was not created`);
+    assert.ok(stderr.includes(`INFINO_MCP_URI not set; using ${expected}`), stderr);
+    assert.doesNotMatch(stderr, /INFINO_API_KEY is set/);
+  } finally {
+    await blank.close();
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

@@ -1,6 +1,6 @@
 ---
 name: using-infino
-description: How to retrieve from and write to Infino through the Infino MCP server, including choosing keyword vs semantic vs hybrid search, SQL, creating tables, adding and replacing documents, and when to use the CLI instead. Use when the user wants to search, query, recall, store, or manage data in Infino or on object storage (S3/Azure) or Infino Cloud.
+description: How to call the Infino MCP server's infino_* tools, including choosing keyword vs semantic vs hybrid search, SQL, creating tables, adding and replacing documents, and when to use the CLI instead. Use only when the infino_* MCP tools are available in this session and the user wants to search, query, recall, store, or manage data through them. Not for writing application code that uses the Infino library; that is the search-with-infino skill.
 ---
 
 # Using Infino

@@ -56,7 +56,7 @@ import { joinGate, joinRefusal, withoutComments, type Join } from "./join-gate.j
 //   - an https://<host>/<database> URI       → the hosted Infino Cloud service,
 //     authenticated with an API key (INFINO_API_KEY).
 
-// When INFINO_MCP_URI is unset, default to a durable per-user directory so a
+// When INFINO_MCP_URI is unset or blank, default to a durable per-user directory so a
 // fresh install persists across restarts with no configuration. Fall back to
 // an ephemeral in-process catalog if that directory can't be created (a
 // sandboxed or read-only host, or a registry health-check spawn): the server
@@ -82,7 +82,11 @@ function defaultUri(): string {
   }
 }
 
-const uri = process.env.INFINO_MCP_URI ?? defaultUri();
+// A blank value counts as unset. Clients that template the environment from
+// optional settings, such as the Claude Code plugin's userConfig, pass an empty
+// string when the user leaves the field blank, and that has to mean "use the
+// default", not "open a catalog at the empty path".
+const uri = process.env.INFINO_MCP_URI?.trim() || defaultUri();
 
 // A hosted (Infino Cloud) target is an https:// URI that carries the database
 // in its path (https://<host>/<database>); any other scheme is an embedded
@@ -124,7 +128,7 @@ addStorageOption("azure_storage_account_key", process.env.AZURE_STORAGE_KEY);
 // API key for a hosted (https://) connection. The binding also reads
 // INFINO_API_KEY on its own, but we pass it explicitly so the credential path
 // is visible here and we can warn on an obvious misconfiguration.
-const apiKey = process.env.INFINO_API_KEY;
+const apiKey = process.env.INFINO_API_KEY?.trim() || undefined;
 
 // Opt into a connect-time probe so bad credentials or an unreachable bucket
 // fail at startup instead of on the first search.

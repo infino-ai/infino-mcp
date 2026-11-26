@@ -1,13 +1,13 @@
 {
   "name": "infino",
   "displayName": "Infino",
-  "description": "Keyword, semantic, hybrid, and SQL retrieval for AI agents — RAG, persistent agent memory, and search over your own data, stored as plain Parquet on object storage. Local embeddings, no API key; point it at a path, a bucket, or Infino Cloud.",
-  "version": "0.3.0",
+  "description": "Keyword, semantic, hybrid, and SQL retrieval for AI agents: RAG, persistent agent memory, and search over your own data, stored as plain Parquet on object storage. Local embeddings, no API key; point it at a path, a bucket, or Infino Cloud.",
+  "version": "0.4.0",
   "author": {
     "name": "Infino",
     "url": "https://github.com/infino-ai"
   },
-  "homepage": "https://github.com/infino-ai/infino-mcp",
+  "homepage": "https://github.com/infino-ai/infino",
   "repository": "https://github.com/infino-ai/infino-mcp",
   "license": "Apache-2.0",
   "keywords": [
@@ -26,8 +26,8 @@
     "infino_uri": {
       "type": "string",
       "title": "Infino data URI",
-      "description": "Data to serve: a local path (e.g. /Users/me/.infino/memory), an s3://|gs://|az:// bucket URI, or a hosted https://<host>/<database> endpoint (Infino Cloud).",
-      "required": true
+      "description": "Optional. Leave blank to keep data in ~/.infino/mcp. Otherwise a local path (e.g. /Users/me/.infino/memory), an s3://|gs://|az:// bucket URI, or a hosted https://<host>/<database> endpoint (Infino Cloud).",
+      "required": false
     },
     "infino_api_key": {
       "type": "string",

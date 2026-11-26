@@ -80,14 +80,14 @@ The sections below show the exact place each client expects this block.
 
 ## Claude Code plugin (one-step install)
 
-For [Claude Code](https://claude.com/claude-code), this repo is also a plugin marketplace. Installing the plugin wires up the MCP server **plus** a how-to-use skill and an `/infino-search` command in one step — no JSON to edit. Inside Claude Code:
+For [Claude Code](https://claude.com/claude-code), this repo is also a plugin marketplace. Installing the plugin wires up the MCP server **plus** two skills and an `/infino-search` command in one step, with no JSON to edit. Inside Claude Code:
 
 ```
 /plugin marketplace add infino-ai/infino-mcp
 /plugin install infino@infino-ai
 ```
 
-On enable you'll be prompted for your **Infino data URI** (`INFINO_MCP_URI`) and, for Infino Cloud, your **API key**. That's it: the `infino_*` tools, the `using-infino` skill, and `/infino-search <query>` are then available. (Other clients: use the [Client setup](#client-setup) configs below.)
+On enable you'll be asked for an **Infino data URI** (`INFINO_MCP_URI`) and, for Infino Cloud, an **API key**. Both are optional: leave the URI blank to keep data in `~/.infino/mcp`. You then have the `infino_*` tools, the `using-infino` skill (how to call those tools), the `search-with-infino` skill (how to add Infino search to your own Python, Node.js or Rust code), and `/infino-search <query>`. (Other clients: use the [Client setup](#client-setup) configs below.)
 
 ---
 
