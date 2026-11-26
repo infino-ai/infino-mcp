@@ -1,0 +1,3 @@
+# The image installs the published package; the build reads package.json only.
+*
+!package.json
