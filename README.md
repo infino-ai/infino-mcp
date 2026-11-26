@@ -4,6 +4,10 @@
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.infino--ai%2Fmcp--server-blue)](https://registry.modelcontextprotocol.io/?search=io.github.infino-ai/mcp-server)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-green.svg)](./LICENSE)
 
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Infino-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522infino%2522%252C%2522type%2522%253A%2522stdio%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540infino-ai%252Fmcp-server%2522%255D%257D)
+[![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Infino-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect?url=vscode-insiders%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522infino%2522%252C%2522type%2522%253A%2522stdio%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540infino-ai%252Fmcp-server%2522%255D%257D)
+[![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=infino&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBpbmZpbm8tYWkvbWNwLXNlcnZlciJdfQ%3D%3D)
+
 An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com/infino-ai/infino) — it lets an AI agent run **keyword**, **semantic**, **hybrid**, and **SQL** retrieval over your data on object storage — the retrieval layer for RAG, persistent agent memory, and search over your own files — from any MCP-compatible client (Claude Code, Claude Desktop, Cursor, VS Code, and others). Published on npm as [`@infino-ai/mcp-server`](https://www.npmjs.com/package/@infino-ai/mcp-server) and listed on the [official MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.infino-ai/mcp-server` (which propagates to catalogs like Smithery, Glama, and PulseMCP).
 
 - **Local embeddings, no key.** Semantic search embeds queries with a local model — nothing leaves the machine for embedding.
@@ -23,6 +27,7 @@ An [MCP](https://modelcontextprotocol.io) server for [Infino](https://github.com
   - [Claude Desktop](#claude-desktop)
   - [Cursor](#cursor)
   - [VS Code](#vs-code)
+  - [Docker](#docker)
   - [Other MCP clients](#other-mcp-clients)
 - [Configuration](#configuration)
   - [Environment variables](#environment-variables)
@@ -137,6 +142,10 @@ Edit the configuration file (create it if it doesn't exist), then fully restart 
 
 ### Cursor
 
+[![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=infino&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBpbmZpbm8tYWkvbWNwLXNlcnZlciJdfQ%3D%3D)
+
+The button installs the server with its defaults (data in `~/.infino/mcp`). To serve a bucket or Infino Cloud, add an `env` block afterwards, or configure it by hand.
+
 Add the server to **`~/.cursor/mcp.json`** (available in all projects) or **`<project>/.cursor/mcp.json`** (this project only), then reload. The format matches Claude Desktop:
 
 ```jsonc
@@ -155,6 +164,10 @@ Add the server to **`~/.cursor/mcp.json`** (available in all projects) or **`<pr
 
 ### VS Code
 
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Infino-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522infino%2522%252C%2522type%2522%253A%2522stdio%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540infino-ai%252Fmcp-server%2522%255D%257D) [![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Infino-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect?url=vscode-insiders%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522infino%2522%252C%2522type%2522%253A%2522stdio%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540infino-ai%252Fmcp-server%2522%255D%257D)
+
+The buttons install the server with its defaults (data in `~/.infino/mcp`). To serve a bucket or Infino Cloud, add an `env` block afterwards, or configure it by hand.
+
 VS Code (1.102+) reads MCP servers from **`.vscode/mcp.json`** in the workspace (or your user `mcp.json` via the command palette → *MCP: Open User Configuration*). Note the top-level key is `servers` and each entry declares `"type": "stdio"`:
 
 ```jsonc
@@ -171,6 +184,17 @@ VS Code (1.102+) reads MCP servers from **`.vscode/mcp.json`** in the workspace 
   }
 }
 ```
+
+### Docker
+
+The repository's `Dockerfile` builds an image with the server and its local embedding model, so semantic search works offline. Data goes to a named volume so it survives across sessions:
+
+```sh
+docker build -t infino-mcp .
+docker run -i --rm -v infino-data:/home/node/.infino infino-mcp
+```
+
+Pass `-e INFINO_MCP_URI=s3://...` (with the bucket's credentials) or an Infino Cloud `https://<host>/<database>` endpoint with `-e INFINO_API_KEY=...` to serve data outside the container.
 
 ### Other MCP clients
 
